@@ -1,0 +1,45 @@
+# Compiled files
+*.class
+*.jar
+*.war
+*.ear
+*.exe
+*.out
+*.o
+*.a
+*.so
+*.dylib
+
+# Build directories
+target/
+build/
+bin/
+out/
+cmake-build-*/
+*.iml
+.idea/
+.vscode/
+.settings/
+.project
+.classpath
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Environment / local config
+application-local.properties
+*.local
+*.secret
+
+# Database files (if using SQLite)
+*.db
+*.sqlite
+
+# Uploaded files (if any)
+uploads/
+temp/

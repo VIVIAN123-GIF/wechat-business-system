@@ -1,20 +1,8 @@
 #include "TcpClient.h"
 #include "../common/ProtocolEncoder.h"
+#include "../common/NetUtil.h"
 #include <cstring>
 #include <iostream>
-
-namespace {
-// 循环读满指定字节
-bool recvExact(SOCKET fd, char* buf, int len) {
-    int received = 0;
-    while (received < len) {
-        int ret = recv(fd, buf + received, len - received, 0);
-        if (ret <= 0) return false;
-        received += ret;
-    }
-    return true;
-}
-}
 
 bool TcpClient::connect() {
     WSADATA wsaData;
@@ -69,7 +57,7 @@ bool TcpClient::receiveResponse(int& outProtocolCode, std::string& outJsonBody, 
     setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv));
 
     char headBuf[sizeof(ProtocolHeader)];
-    if (!recvExact(sockfd_, headBuf, sizeof(ProtocolHeader))) return false;
+    if (!NetUtil::recvExact(sockfd_, headBuf, sizeof(ProtocolHeader))) return false;
     ProtocolHeader header;
     std::memcpy(&header, headBuf, sizeof(header));
     if (ntohl(header.magic) != ProtocolConstants::MAGIC) return false;
@@ -77,6 +65,6 @@ bool TcpClient::receiveResponse(int& outProtocolCode, std::string& outJsonBody, 
     uint32_t bodyLen = ntohl(header.length);
     if (bodyLen > 1024 * 1024) return false;
     outJsonBody.resize(bodyLen);
-    if (bodyLen > 0 && !recvExact(sockfd_, &outJsonBody[0], static_cast<int>(bodyLen))) return false;
+    if (bodyLen > 0 && !NetUtil::recvExact(sockfd_, &outJsonBody[0], static_cast<int>(bodyLen))) return false;
     return true;
 }

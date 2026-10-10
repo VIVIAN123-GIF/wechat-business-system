@@ -6,6 +6,7 @@ std::unique_ptr<ICommandHandler> HandlerFactory::create(uint32_t code, HandlerCo
     switch (code) {
         case C_REQ_PRODUCT_LIST:   return std::make_unique<ShowProductHandler>(ctx);
         case C_REQ_PRODUCT_DETAIL: return std::make_unique<ProductDetailHandler>(ctx);
+        case C_REQ_SEARCH:         return std::make_unique<SearchProductHandler>(ctx);
         case C_REQ_LOGIN:          return std::make_unique<LoginHandler>(ctx);
         case C_REQ_REGISTER:       return std::make_unique<RegisterHandler>(ctx);
         case C_REQ_ADD_CART:       return std::make_unique<AddCartHandler>(ctx);
@@ -13,6 +14,10 @@ std::unique_ptr<ICommandHandler> HandlerFactory::create(uint32_t code, HandlerCo
         case C_REQ_CHECKOUT:       return std::make_unique<CheckoutHandler>(ctx);
         case C_REQ_ORDER_QUERY:    return std::make_unique<OrderQueryHandler>(ctx);
         case C_REQ_RETURN:         return std::make_unique<ReturnHandler>(ctx);
+        case C_REQ_STATS:          return std::make_unique<SalesStatsHandler>(ctx);
+        case C_REQ_SERVICE_MSG:    return std::make_unique<ServiceMsgHandler>(ctx);
+        case C_REQ_RETURN_LIST:    return std::make_unique<ReturnListHandler>(ctx);
+        case C_REQ_RETURN_AUDIT:   return std::make_unique<ReturnAuditHandler>(ctx);
         case C_REQ_HEARTBEAT:      return std::make_unique<HeartbeatHandler>();
         default:                   return nullptr;
     }

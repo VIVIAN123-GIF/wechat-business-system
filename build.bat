@@ -18,6 +18,7 @@ if errorlevel 1 goto :err
 echo [3/3] 编译客户端 client.exe ...
 g++ -std=c++17 -O1 -Ivendor -I. ^
     client\main.cpp client\ClientController.cpp client\TcpClient.cpp client\LocalCart.cpp ^
+    client\UIFactory.cpp ^
     common\ProtocolEncoder.cpp -o build\client.exe -lws2_32
 if errorlevel 1 goto :err
 

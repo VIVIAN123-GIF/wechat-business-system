@@ -19,11 +19,26 @@ std::unique_ptr<IPromotion> PromotionFactory::createFromRecord(const Promotion& 
             return std::make_unique<PriceCutPromotion>(p.id, p.param1);
         case 3:  // 满减券
             return std::make_unique<CouponPromotion>(p.id, p.param1, p.param2);
+        case 4:  // 阶梯折扣（第2件9折/第3件8折/免单）
+            return createTierDiscount(p);
         default:
             LOG_WARN("未知促销类型: id=" + std::to_string(p.id) +
                      " type=" + std::to_string(p.type));
             return nullptr;
     }
+}
+
+// 从促销记录解析阶梯分段：param1/param2=第1阶梯，param3/param4=第2阶梯，param5/param6=第3阶梯
+std::unique_ptr<IPromotion> PromotionFactory::createTierDiscount(const Promotion& p) {
+    std::vector<TierDiscountPromotion::Tier> rules;
+    if (p.param1 > 0 && p.param2 >= 0.0) rules.push_back({static_cast<int>(p.param1), p.param2});
+    if (p.param3 > 0 && p.param4 >= 0.0) rules.push_back({static_cast<int>(p.param3), p.param4});
+    if (p.param5 > 0 && p.param6 >= 0.0) rules.push_back({static_cast<int>(p.param5), p.param6});
+    if (rules.empty()) {
+        LOG_WARN("阶梯折扣参数无效: id=" + std::to_string(p.id));
+        return nullptr;
+    }
+    return std::make_unique<TierDiscountPromotion>(p.id, std::move(rules));
 }
 
 std::unique_ptr<IPromotion> PromoChainBuilder::build(const std::vector<int>& promoIds,

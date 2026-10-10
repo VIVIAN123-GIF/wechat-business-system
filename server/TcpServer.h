@@ -10,6 +10,8 @@
 #include <thread>
 #include <atomic>
 #include <memory>
+#include <set>
+#include <mutex>
 #include "TaskQueue.h"
 #include "WorkerPool.h"
 #include "handlers/handlers.h"
@@ -32,4 +34,7 @@ private:
     std::thread acceptThread_;
     WorkerPool workerPool_{4};
     HandlerContext ctx_;
+    // 活跃客户端连接集合：stop() 时统一关闭，唤醒阻塞在 recv 的线程使其退出
+    std::set<SOCKET> activeClients_;
+    std::mutex clientsMtx_;
 };

@@ -33,6 +33,7 @@ public:
                                  double discount, double final) = 0;
     virtual void drawOrderList(const std::vector<OrderInfo>& orders) = 0;
 
-    // 风格名
+    // 风格名 / 主题色名
     virtual std::string getStyleName() const = 0;
+    virtual std::string getThemeName() const = 0;
 };

@@ -24,24 +24,35 @@
 |      | 2001 | 返回商品列表 | S→C | `{"products":[{"id":1,"name":"A","price":99.0,"stock":10}]}` |
 |      | 1002 | 查询商品详情 | C→S | `{"product_id":1}` |
 |      | 2002 | 返回商品详情 | S→C | `{"id":1,"name":"A","price":99.0,"stock":10,"desc":"..."}` |
-| 账号 | 1006 | 登录 | C→S | `{"username":"admin","password":"123456"}` |
-|      | 2006 | 登录结果 | S→C | `{"success":true,"user_id":1,"level":2}` |
-|      | 1007 | 注册 | C→S | `{"username":"u","password":"p"}` |
+| 账号 | 1006 | 登录 | C→S | `{"username":"admin","password":"<SHA256摘要>"}`（摘要=SHA256("微商系统$"||用户名||"#"||明文)） |
+|      | 2006 | 登录结果 | S→C | `{"success":true,"user_id":1,"level":2,"token":"1-1694152800123-..."}` |
+|      | 1007 | 注册 | C→S | `{"username":"u","password":"<SHA256摘要>"}` |
 |      | 2007 | 注册结果 | S→C | `{"success":true,"user_id":3}` |
-| 购物车 | 1010 | 加入购物车（库存校验） | C→S | `{"user_id":1,"product_id":1,"quantity":2}` |
+| 购物车 | 1010 | 加入购物车（库存校验） | C→S | `{"user_id":1,"token":"...","product_id":1,"quantity":2}` |
 |        | 2010 | 加入购物车结果 | S→C | `{"success":true,"message":"库存充足","stock_left":13}` |
+| 搜索 | 1005 | 商品搜索（名称/分类/描述模糊） | C→S | `{"keyword":"数码"}` |
+|      | 2005 | 搜索结果 | S→C | `{"keyword":"数码","count":2,"products":[{"id":4,"name":"降噪无线耳机","price":899,"stock":5,"category":"数码"}]}` |
 | 促销 | 1020 | 获取可用促销 | C→S | `{}` |
-|      | 2020 | 返回可用促销 | S→C | `{"promotions":[{"id":1,"name":"全场9折","type":1}]}` |
-| 结算 | 1030 | 提交结算 | C→S | `{"user_id":1,"items":[{"product_id":1,"quantity":2}],"promo_ids":[1,3]}` |
+|      | 2020 | 返回可用促销 | S→C | `{"promotions":[{"id":1,"name":"全场9折","type":1,"param1":0.9,...}]}` |
+|      |      | type=4 阶梯折扣 | S→C | `{"id":5,"name":"第2件9折","type":4,"param1":1,"param2":1.0,"param3":2,"param4":0.9}`（param1/3/5=档件数，param2/4/6=档折扣率） |
+| 结算 | 1030 | 提交结算 | C→S | `{"user_id":1,"token":"...","items":[{"product_id":1,"quantity":2}],"promo_ids":[1,3]}` |
 |      | 2030 | 结算结果 | S→C | `{"order_id":1,"order_no":"MS20260909001","original":598.0,"discount":88.8,"final":509.2,"status":"success"}` |
-| 订单 | 1040 | 查询我的订单 | C→S | `{"user_id":1}` |
-|      | 2040 | 返回订单列表 | S→C | `{"orders":[{"order_id":1,"order_no":"...","total":598.0,"final":509.2,"status":1,"items":[...]}]}` |
-| 售后 | 1050 | 申请退货 | C→S | `{"user_id":1,"order_id":1,"reason":"质量问题"}` |
-|      | 2050 | 退货申请结果 | S→C | `{"success":true,"return_id":1,"status":0}` |
+| 订单 | 1040 | 查询我的订单 | C→S | `{"user_id":1,"token":"..."}` |
+|      | 2040 | 返回订单列表 | S→C | `{"orders":[{"order_id":1,"order_no":"...","total":598.0,"final":509.2,"status":1,"return_status":0,"items":[...]}]}`（return_status：0无退货 1待审核 2已通过 3已拒绝） |
+| 售后 | 1050 | 申请退货 | C→S | `{"user_id":1,"token":"...","order_id":1,"reason":"质量问题"}` |
+|      | 2050 | 退货申请结果 | S→C | `{"success":true,"return_id":1,"status":0,"message":"退货申请已提交，等待审核"}` |
+|      | 1070 | 查询退货单（用户查自己，管理员查全部） | C→S | `{"user_id":1,"token":"..."}` |
+|      | 2070 | 返回退货单列表 | S→C | `{"returns":[{"return_id":1,"order_id":1,"user_id":1,"reason":"...","status":0,"apply_time":"...","audit_time":null}]}` |
+|      | 1080 | 退货审核（管理员） | C→S | `{"user_id":1,"token":"...","return_id":1,"approve":true}` |
+|      | 2080 | 审核结果 | S→C | `{"success":true,"return_id":1,"status":1,"message":"退货已通过，库存已回补"}` |
+| 统计 | 1060 | 销售数据统计（选区间/对象） | C→S | `{"days":30,"product_id":0,"user_id":0}`（days>0 最近N天；product_id>0 限定商品；user_id>0 限定用户） |
+|      | 2060 | 统计结果 | S→C | `{"summary":{"order_count":6,"total_amount":...,"discount":...,"final_amount":...,"avg_order":...,"return_count":1},"by_day":[{"date":"2026-09-16","orders":2,"amount":568.1}],"by_product":[{"product_id":1,"name":"...","quantity":5,"amount":...}],"by_user":[...]}` |
+| 客服 | 1065 | 联系客服（社交消息） | C→S | `{"user_id":1,"token":"...","content":"我想退货怎么操作？"}` |
+|      | 2065 | 客服应答 | S→C | `{"success":true,"received":"我想退货怎么操作？","reply":"客服小助手：已收到您的消息，我们会尽快处理（工单已登记）。"}` |
 | 系统 | 1999 | 心跳/保活 | C→S | `{"timestamp":1694152800}` |
 |      | 2999 | 心跳应答 | S→C | `{"timestamp":1694152800,"server_time":...}` |
 | 错误 | 4001 | 通用错误 | S→C | `{"err_code":1001,"err_msg":"库存不足"}` |
-|      | 4002 | 未登录 | S→C | `{"err_code":1002,"err_msg":"请先登录"}` |
+|      | 4002 | 未登录/会话失效（err_code=1011） | S→C | `{"err_code":1011,"err_msg":"请先登录"}` |
 
 ## 3. 业务错误码（置于 4001/4002 响应的 err_code 字段）
 
@@ -57,8 +68,13 @@
 | 1008 | 重复提交 |
 | 1009 | 系统繁忙，请稍后重试 |
 | 1010 | 网络超时 |
+| 1011 | 未登录/会话失效（协议码 4002） |
+| 1012 | 退货单不存在或已审核 |
+| 1013 | 无权限（非管理员/非本人） |
 
 ## 4. 会话约定
 
-- 结算（1030）采用**同步应答**（2030 直接返回结果）；售后审核为同步返回"待审核"状态。
-- 登录成功后，客户端后续请求携带 `user_id`。
+- **登录鉴权**：登录（1006）成功后服务端生成会话 token（绑定 user_id）；此后**所有业务请求**（加购/结算/订单/退货/统计/客服）必须携带 `token` 字段，服务端校验 token 有效且属于请求中的 user_id，否则返回 4002。`S_ERR_UNAUTH`(4002) 仅用于鉴权失败。
+- **密码安全**：客户端传输与数据库存储均为 SHA-256 摘要（`SHA256("微商系统$" || username || "#" || 明文)`），全程无明文落库/上线。
+- **售后闭环**：退货申请后订单置"退货中(5)"并记录原状态；管理员审核（1080）通过 → 回补库存 + 订单置"已取消(4)"，拒绝 → 恢复订单原状态。
+- 结算（1030）采用**同步应答**（2030 直接返回结果）。

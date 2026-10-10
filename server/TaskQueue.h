@@ -59,6 +59,16 @@ public:
         cond_.notify_all();
     }
 
+    // 重置队列：清空残留任务并解除 shutdown 状态（支持同进程 stop->start 重启）
+    void reset() {
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            while (!queue_.empty()) queue_.pop();
+            shutdown_.store(false);
+        }
+        cond_.notify_all();
+    }
+
 private:
     TaskQueue() = default;
     mutable std::mutex mtx_;

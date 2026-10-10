@@ -25,6 +25,9 @@ namespace ProtocolConstants {
     constexpr uint32_t S_RES_PRODUCT_LIST  = 2001;
     constexpr uint32_t C_REQ_PRODUCT_DETAIL = 1002;
     constexpr uint32_t S_RES_PRODUCT_DETAIL = 2002;
+    // 商品搜索（按名称/分类模糊查询）
+    constexpr uint32_t C_REQ_SEARCH        = 1005;
+    constexpr uint32_t S_RES_SEARCH        = 2005;
     // 账号
     constexpr uint32_t C_REQ_LOGIN        = 1006;
     constexpr uint32_t S_RES_LOGIN        = 2006;
@@ -45,6 +48,17 @@ namespace ProtocolConstants {
     // 售后
     constexpr uint32_t C_REQ_RETURN       = 1050;
     constexpr uint32_t S_RES_RETURN       = 2050;
+    // 销售统计（服务端 UI 层：数据统计分析界面）
+    constexpr uint32_t C_REQ_STATS        = 1060;
+    constexpr uint32_t S_RES_STATS        = 2060;
+    // 客服消息（社交：联系客服）
+    constexpr uint32_t C_REQ_SERVICE_MSG  = 1065;
+    constexpr uint32_t S_RES_SERVICE_MSG  = 2065;
+    // 售后扩展：退货单查询 / 退货审核（管理员）
+    constexpr uint32_t C_REQ_RETURN_LIST  = 1070;
+    constexpr uint32_t S_RES_RETURN_LIST  = 2070;
+    constexpr uint32_t C_REQ_RETURN_AUDIT = 1080;
+    constexpr uint32_t S_RES_RETURN_AUDIT = 2080;
     // 系统
     constexpr uint32_t C_REQ_HEARTBEAT    = 1999;
     constexpr uint32_t S_RES_HEARTBEAT    = 2999;
@@ -64,4 +78,7 @@ namespace ErrorCodes {
     constexpr int DUPLICATE_SUBMIT     = 1008;
     constexpr int SYSTEM_BUSY          = 1009;
     constexpr int NETWORK_TIMEOUT      = 1010;
+    constexpr int UNAUTHORIZED         = 1011;  // 未登录/会话无效（协议码 4002）
+    constexpr int RETURN_NOT_FOUND     = 1012;  // 退货单不存在或已审核
+    constexpr int NO_PERMISSION        = 1013;  // 无权限（非管理员/非本人）
 }

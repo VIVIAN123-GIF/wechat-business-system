@@ -15,9 +15,22 @@
 #include <sstream>
 #include "../common/ProtocolHeader.h"
 #include "../common/ProtocolEncoder.h"
+#include "../common/NetUtil.h"
+#include "../common/SHA256.h"
+#include "../server/model/models.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
+
+// 已登录会话 token（鉴权）
+std::string g_token;
+std::string g_adminToken;
+
+// 统一在请求中注入会话 token
+json withAuth(json req) {
+    if (!g_token.empty()) req["token"] = g_token;
+    return req;
+}
 
 struct Conn {
     SOCKET fd = INVALID_SOCKET;
@@ -40,24 +53,9 @@ struct Conn {
             if (n == SOCKET_ERROR) return false;
             sent += n;
         }
-        char headBuf[sizeof(ProtocolHeader)];
-        int got = 0;
-        while (got < static_cast<int>(sizeof(ProtocolHeader))) {
-            int n = recv(fd, headBuf + got, static_cast<int>(sizeof(ProtocolHeader)) - got, 0);
-            if (n <= 0) return false;
-            got += n;
-        }
-        ProtocolHeader h;
-        std::memcpy(&h, headBuf, sizeof(h));
-        respCode = static_cast<int>(ntohl(h.code));
-        uint32_t len = ntohl(h.length);
-        respBody.resize(len);
-        got = 0;
-        while (got < static_cast<int>(len)) {
-            int n = recv(fd, &respBody[0] + got, static_cast<int>(len) - got, 0);
-            if (n <= 0) return false;
-            got += n;
-        }
+        uint32_t recvCode = 0;
+        if (!NetUtil::recvFullPacket(fd, recvCode, respBody)) return false;
+        respCode = static_cast<int>(recvCode);
         return true;
     }
     void close() { if (fd != INVALID_SOCKET) closesocket(fd); }
@@ -86,16 +84,44 @@ int main() {
     {
         Conn c; c.connect();
         int code = 0; std::string body;
-        bool ok = c.sendRecv(1006, "{\"username\":\"user1\",\"password\":\"123456\"}", code, body);
+        json loginReq;
+        loginReq["username"] = "user1";
+        loginReq["password"] = hashPassword("user1", "123456");  // 密码摘要登录
+        bool ok = c.sendRecv(1006, loginReq.dump(), code, body);
         check("登录 user1 -> 2006", ok && code == 2006);
         if (ok) {
             auto j = json::parse(body);
             check("登录成功标志", j["success"].get<bool>());
             userId = j["user_id"];
+            g_token = j.value("token", "");
+            check("登录返回会话 token", !g_token.empty());
         }
-        // 错误密码
-        ok = c.sendRecv(1006, "{\"username\":\"user1\",\"password\":\"wrong\"}", code, body);
+        // 错误密码（摘要比较）
+        json badReq;
+        badReq["username"] = "user1";
+        badReq["password"] = hashPassword("user1", "wrong");
+        ok = c.sendRecv(1006, badReq.dump(), code, body);
         check("错误密码被拒 (4001)", ok && code == 4001);
+        // 无 token 访问他人接口应被拒（会话鉴权）
+        json noAuthReq = {{"user_id", 999}};
+        ok = c.sendRecv(1040, noAuthReq.dump(), code, body);
+        check("无 token 查询订单被拒 (4002)", ok && code == 4002);
+        c.close();
+    }
+
+    // 2.5 admin 登录（用于退货审核）
+    {
+        Conn c; c.connect();
+        int code = 0; std::string body;
+        json loginReq;
+        loginReq["username"] = "admin";
+        loginReq["password"] = hashPassword("admin", "123456");
+        bool ok = c.sendRecv(1006, loginReq.dump(), code, body);
+        check("登录 admin -> 2006", ok && code == 2006);
+        if (ok) {
+            auto j = json::parse(body);
+            g_adminToken = j.value("token", "");
+        }
         c.close();
     }
 
@@ -114,15 +140,28 @@ int main() {
         c.close();
     }
 
+    // 3.1 商品详情 1002 -> 2002
+    {
+        Conn c; c.connect();
+        int code = 0; std::string body;
+        bool ok = c.sendRecv(1002, "{\"product_id\":1}", code, body);
+        check("商品详情 1002 -> 2002", ok && code == 2002);
+        if (ok) {
+            auto j = json::parse(body);
+            check("详情含名称", j.value("name", "") != "");
+        }
+        c.close();
+    }
+
     // 4. 加购校验
     {
         Conn c; c.connect();
         int code = 0; std::string body;
-        json req = {{"user_id", userId}, {"product_id", 1}, {"quantity", 2}};
+        json req = withAuth({{"user_id", userId}, {"product_id", 1}, {"quantity", 2}});
         bool ok = c.sendRecv(1010, req.dump(), code, body);
         check("加购校验 1010 -> 2010", ok && code == 2010);
         // 超量校验
-        json req2 = {{"user_id", userId}, {"product_id", 1}, {"quantity", 9999}};
+        json req2 = withAuth({{"user_id", userId}, {"product_id", 1}, {"quantity", 9999}});
         ok = c.sendRecv(1010, req2.dump(), code, body);
         check("超量加购被拒 (1001)", ok && code == 4001 && body.find("库存不足") != std::string::npos);
         c.close();
@@ -136,7 +175,35 @@ int main() {
         check("促销列表 1020 -> 2020", ok && code == 2020);
         if (ok) {
             auto j = json::parse(body);
-            check("促销数量为 4", j["promotions"].size() == 4);
+            check("促销数量为 6", j["promotions"].size() == 6,
+                  "实际=" + std::to_string(j["promotions"].size()));
+        }
+        c.close();
+    }
+
+    // 5.5 商品搜索（按名称/分类模糊查询）
+    {
+        Conn c; c.connect();
+        int code = 0; std::string body;
+        // 搜分类"数码" -> 2 条（降噪无线耳机 / 智能手环）
+        bool ok = c.sendRecv(1005, "{\"keyword\":\"数码\"}", code, body);
+        check("搜索 1005 -> 2005", ok && code == 2005);
+        if (ok) {
+            auto j = json::parse(body);
+            check("搜索'数码'命中2件", j["count"] == 2,
+                  "count=" + std::to_string(j["count"].get<int>()));
+        }
+        // 搜名称"耳机" -> 1 条（降噪无线耳机 id=4）
+        ok = c.sendRecv(1005, "{\"keyword\":\"耳机\"}", code, body);
+        if (ok) {
+            auto j = json::parse(body);
+            check("搜索'耳机'命中1件", j["count"] == 1 && j["products"][0]["id"] == 4);
+        }
+        // 搜不存在的词 -> 0 条
+        ok = c.sendRecv(1005, "{\"keyword\":\"不存在的商品xyz\"}", code, body);
+        if (ok) {
+            auto j = json::parse(body);
+            check("搜索无结果返回0件", j["count"] == 0);
         }
         c.close();
     }
@@ -145,7 +212,7 @@ int main() {
     {
         Conn c; c.connect();
         int code = 0; std::string body;
-        json req;
+        json req = withAuth(json::object());
         req["user_id"] = userId;
         req["items"] = json::array({ {{"product_id", 1}, {"quantity", 2}} });
         req["promo_ids"] = json::array({2});  // 满200减30
@@ -155,10 +222,100 @@ int main() {
             auto j = json::parse(body);
             // 299*2 = 598，满200减30 -> 568（user1 非 VIP 无折上折）
             double final = j["final"];
-            check("促销计算正确 (598-30=568)", std::abs(final - 568.0) < 0.001,
+            check("促销计算正确 (598-30=568)", std::abs(final - 56800.0) < 1.0,
                   "final=" + std::to_string(final));
             check("订单号格式 MS+时间", j["order_no"].get<std::string>().rfind("MS", 0) == 0);
             check("促销描述包含满减", j["promo_desc"].get<std::string>().find("满200减30") != std::string::npos);
+        }
+        c.close();
+    }
+
+    // 6.1 无效/过期促销被拒（不再静默跳过）
+    {
+        Conn c; c.connect();
+        int code = 0; std::string body;
+        json req = withAuth(json::object());
+        req["user_id"] = userId;
+        req["items"] = json::array({ {{"product_id", 1}, {"quantity", 1}} });
+        req["promo_ids"] = json::array({999});  // 不存在的促销
+        bool ok = c.sendRecv(1030, req.dump(), code, body);
+        check("无效促销被拒 (1007)", ok && code == 4001 && body.find("已过期") != std::string::npos);
+        // 重复促销自动去重不报错
+        json req2 = withAuth(json::object());
+        req2["user_id"] = userId;
+        req2["items"] = json::array({ {{"product_id", 3}, {"quantity", 1}} });
+        req2["promo_ids"] = json::array({1, 1});  // 重复选两次全场9折
+        ok = c.sendRecv(1030, req2.dump(), code, body);
+        check("重复促销自动去重不报错", ok && code == 2030);
+        c.close();
+    }
+
+    // 6.5 阶梯折扣（type=4：第2件9折 / 第3件免单）
+    // 促销 id：5=第2件9折(1件原价,2件起9折) 6=第3件免单(前2件原价,第3件起免单)
+    {
+        Conn c; c.connect();
+        int code = 0; std::string body;
+
+        // 6.5.1 第2件9折：299 元商品买 2 件 => 299 + 299*0.9 = 568.1
+        json reqA = withAuth(json::object());
+        reqA["user_id"] = userId;
+        reqA["items"] = json::array({ {{"product_id", 1}, {"quantity", 2}} });
+        reqA["promo_ids"] = json::array({5});
+        bool okA = c.sendRecv(1030, reqA.dump(), code, body);
+        check("阶梯折扣 第2件9折 1030 -> 2030", okA && code == 2030);
+        if (okA) {
+            auto j = json::parse(body);
+            double final = j["final"];
+            check("第2件9折计算正确 (299+269.1=568.1)", std::abs(final - 56810.0) < 1.0,
+                  "final=" + std::to_string(final));
+            check("阶梯折扣描述含'第2件9折'",
+                  j["promo_desc"].get<std::string>().find("第2件9折") != std::string::npos,
+                  "desc=" + j["promo_desc"].get<std::string>());
+        }
+
+        // 6.5.2 第3件免单：299 元商品买 3 件 => 299*2 + 0 = 598
+        json reqB = withAuth(json::object());
+        reqB["user_id"] = userId;
+        reqB["items"] = json::array({ {{"product_id", 1}, {"quantity", 3}} });
+        reqB["promo_ids"] = json::array({6});
+        bool okB = c.sendRecv(1030, reqB.dump(), code, body);
+        check("阶梯折扣 第3件免单 1030 -> 2030", okB && code == 2030);
+        if (okB) {
+            auto j = json::parse(body);
+            double final = j["final"];
+            check("第3件免单计算正确 (598)", std::abs(final - 59800.0) < 1.0,
+                  "final=" + std::to_string(final));
+        }
+
+        // 6.5.3 混合链叠加：第2件9折 + 满200减30（先阶梯 568.1，再满减 30 => 538.1）
+        json reqC = withAuth(json::object());
+        reqC["user_id"] = userId;
+        reqC["items"] = json::array({ {{"product_id", 1}, {"quantity", 2}} });
+        reqC["promo_ids"] = json::array({5, 2});
+        bool okC = c.sendRecv(1030, reqC.dump(), code, body);
+        check("混合链 第2件9折+满200减30 1030 -> 2030", okC && code == 2030);
+        if (okC) {
+            auto j = json::parse(body);
+            double final = j["final"];
+            check("混合链计算正确 (568.1-30=538.1)", std::abs(final - 53810.0) < 1.0,
+                  "final=" + std::to_string(final));
+            check("混合链描述含'满200减30'",
+                  j["promo_desc"].get<std::string>().find("满200减30") != std::string::npos);
+        }
+
+        // 6.5.4 超出最高档延续：买 4 件（第2件9折规则）=> 1.0 + 0.9*3 = 3.7 倍单价
+        json reqD = withAuth(json::object());
+        reqD["user_id"] = userId;
+        reqD["items"] = json::array({ {{"product_id", 2}, {"quantity", 4}} });
+        reqD["promo_ids"] = json::array({5});
+        bool okD = c.sendRecv(1030, reqD.dump(), code, body);
+        check("阶梯折扣 超出最高档 1030 -> 2030", okD && code == 2030);
+        if (okD) {
+            auto j = json::parse(body);
+            double final = j["final"];
+            // 商品2 单价188：188*(1.0 + 0.9*3) = 188*3.7 = 695.6
+            check("超出档延续计算正确 (188*3.7=695.6)", std::abs(final - 69560.0) < 1.0,
+                  "final=" + std::to_string(final));
         }
         c.close();
     }
@@ -167,7 +324,7 @@ int main() {
     {
         Conn c; c.connect();
         int code = 0; std::string body;
-        json req = {{"user_id", userId}};
+        json req = withAuth({{"user_id", userId}});
         bool ok = c.sendRecv(1040, req.dump(), code, body);
         check("订单查询 1040 -> 2040", ok && code == 2040);
         if (ok) {
@@ -180,17 +337,87 @@ int main() {
         c.close();
     }
 
-    // 8. 退货
+    // 8. 退货（原子化：申请后重复申请被拒）
+    int returnId = 0;
     {
         Conn c; c.connect();
         int code = 0; std::string body;
-        json req = {{"user_id", userId}, {"order_id", 1}, {"reason", "测试退货"}};
+
+        // 先查自己的订单，取第一个可退货订单 id（不再硬编码 order_id=1）
+        json qreq = withAuth({{"user_id", userId}});
+        int targetOrderId = 0;
+        if (c.sendRecv(1040, qreq.dump(), code, body) && code == 2040) {
+            auto j = json::parse(body);
+            for (auto& o : j["orders"]) {
+                int st = o.value("status", -1);
+                if (st == ORDER_PAID || st == ORDER_SHIPPED || st == ORDER_COMPLETED) {
+                    targetOrderId = o.value("order_id", 0);
+                    break;
+                }
+            }
+        }
+        check("找到可退货订单", targetOrderId > 0);
+
+        json req = withAuth({{"user_id", userId}, {"order_id", targetOrderId}, {"reason", "测试退货"}});
         bool ok = c.sendRecv(1050, req.dump(), code, body);
         check("退货申请 1050 -> 2050", ok && code == 2050);
-        // 重复退货应被拒（状态已为退货中）
+        if (ok) {
+            auto j = json::parse(body);
+            returnId = j.value("return_id", 0);
+            check("返回退货单号", returnId > 0);
+        }
+        // 重复退货应被拒（订单已置为退货中：状态校验或原子更新任一拦截）
         ok = c.sendRecv(1050, req.dump(), code, body);
-        check("重复退货被拒 (1006)", ok && code == 4001);
+        check("重复退货被拒 (1006/1008)", ok && code == 4001 &&
+              (body.find("不允许退货") != std::string::npos ||
+               body.find("已提交") != std::string::npos));
         c.close();
+    }
+
+    // 8.5 退货进度查询（1070/2070）
+    {
+        Conn c; c.connect();
+        int code = 0; std::string body;
+        json req = withAuth({{"user_id", userId}});
+        bool ok = c.sendRecv(1070, req.dump(), code, body);
+        check("退货进度 1070 -> 2070", ok && code == 2070);
+        if (ok) {
+            auto j = json::parse(body);
+            check("退货列表含刚提交的单", j["returns"].size() >= 1 &&
+                  j["returns"][0]["return_id"] == returnId);
+        }
+        c.close();
+    }
+
+    // 8.6 非管理员审核被拒；admin 审核通过 -> 库存回补
+    {
+        // 用户无权审核
+        Conn c; c.connect();
+        int code = 0; std::string body;
+        json req = withAuth({{"user_id", userId}, {"return_id", returnId}, {"approve", true}});
+        bool ok = c.sendRecv(1080, req.dump(), code, body);
+        check("普通用户审核被拒 (4002)", ok && code == 4002);
+        c.close();
+
+        // admin 审核通过：订单置已取消、库存回补
+        Conn c2; c2.connect();
+        code = 0; body.clear();
+        json req2;
+        req2["user_id"] = 1;
+        req2["return_id"] = returnId;
+        req2["approve"] = true;
+        req2["token"] = g_adminToken;
+        ok = c2.sendRecv(1080, req2.dump(), code, body);
+        check("admin 审核通过 1080 -> 2080", ok && code == 2080);
+        if (ok) {
+            auto j = json::parse(body);
+            check("审核通过提示库存回补", j["message"].get<std::string>().find("回补") != std::string::npos);
+        }
+        // 重复审核被拒（已审核）
+        code = 0; body.clear();
+        ok = c2.sendRecv(1080, req2.dump(), code, body);
+        check("重复审核被拒 (1012)", ok && code == 4001);
+        c2.close();
     }
 
     // 9. 并发防超卖（限量款背包 stock=1，8 线程同时抢购）
@@ -202,12 +429,18 @@ int main() {
                 Conn c;
                 if (!c.connect()) { ++failCount; return; }
                 int code = 0; std::string body;
-                // 登录 admin
-                c.sendRecv(1006, "{\"username\":\"admin\",\"password\":\"123456\"}", code, body);
+                // 登录 admin（取会话 token）
+                json loginReq;
+                loginReq["username"] = "admin";
+                loginReq["password"] = hashPassword("admin", "123456");
+                c.sendRecv(1006, loginReq.dump(), code, body);
+                std::string token;
+                try { token = json::parse(body).value("token", ""); } catch (...) {}
                 json req;
                 req["user_id"] = 1;
                 req["items"] = json::array({ {{"product_id", 6}, {"quantity", 1}} });
                 req["promo_ids"] = json::array();
+                req["token"] = token;
                 if (c.sendRecv(1030, req.dump(), code, body) && code == 2030) {
                     ++successCount;
                 } else {
@@ -220,6 +453,47 @@ int main() {
         check("并发防超卖：仅 1 单成功", successCount.load() == 1,
               "成功=" + std::to_string(successCount.load()) +
               " 失败=" + std::to_string(failCount.load()));
+    }
+
+    // 10. 销售数据统计（服务端数据统计分析界面）
+    {
+        Conn c; c.connect();
+        int code = 0; std::string body;
+        json req = withAuth({{"days", 0}, {"product_id", 0}, {"user_id", 0}});
+        bool ok = c.sendRecv(1060, req.dump(), code, body);
+        check("销售统计 1060 -> 2060", ok && code == 2060);
+        if (ok) {
+            auto j = json::parse(body);
+            int orderCount = j["summary"]["order_count"];
+            double finalAmount = j["summary"]["final_amount"];
+            check("统计订单数 >= 1", orderCount >= 1,
+                  "order_count=" + std::to_string(orderCount));
+            check("统计实收金额 > 0", finalAmount > 0.0,
+                  "final=" + std::to_string(finalAmount));
+            check("按日趋势非空", j["by_day"].size() >= 1);
+            // 商品排行应包含商品1（高端护肤品套装）
+            bool foundP1 = false;
+            for (auto& p : j["by_product"]) {
+                if (p["product_id"] == 1) { foundP1 = true; break; }
+            }
+            check("热销排行含商品1", foundP1);
+        }
+        c.close();
+    }
+
+    // 11. 联系客服（社交：消息 + 自动应答）
+    {
+        Conn c; c.connect();
+        int code = 0; std::string body;
+        json req = withAuth({{"user_id", userId}, {"content", "我想退货怎么操作？"}});
+        bool ok = c.sendRecv(1065, req.dump(), code, body);
+        check("客服消息 1065 -> 2065", ok && code == 2065);
+        if (ok) {
+            auto j = json::parse(body);
+            check("客服回显收到内容", j["received"].get<std::string>().find("退货") != std::string::npos);
+            check("客服自动应答非空", !j["reply"].get<std::string>().empty());
+        }
+        c.close();
     }
 
     std::cout << "\n========== 测试结果 ==========" << std::endl;

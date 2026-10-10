@@ -21,17 +21,3 @@ std::vector<char> ProtocolEncoder::encode(uint32_t code, const std::string& json
     }
     return buffer;
 }
-
-bool ProtocolEncoder::decode(const std::vector<char>& buffer,
-                             uint32_t& outCode, std::string& outBody) {
-    if (buffer.size() < sizeof(ProtocolHeader)) return false;
-    ProtocolHeader header;
-    std::memcpy(&header, buffer.data(), sizeof(header));
-    if (ntohl(header.magic) != ProtocolConstants::MAGIC) return false;
-    if (ntohl(header.version) != ProtocolConstants::VERSION) return false;
-    outCode = ntohl(header.code);
-    uint32_t len = ntohl(header.length);
-    if (buffer.size() < sizeof(header) + len) return false;
-    outBody.assign(buffer.data() + sizeof(header), len);
-    return true;
-}

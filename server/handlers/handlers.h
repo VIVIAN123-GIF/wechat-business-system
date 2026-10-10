@@ -6,8 +6,10 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <nlohmann/json.hpp>
 #include "../repository/repositories.h"
 #include "../promotion/promotions.h"
+#include "../SessionManager.h"
 #include "ICommandHandler.h"
 
 // 观察者模式：订单事件总线（订单创建/状态变更时通知监听者）
@@ -39,7 +41,21 @@ struct HandlerContext {
     std::shared_ptr<PromotionRepository> promos;
     std::shared_ptr<PromotionFactory> promoFactory;
     std::mutex* stockMutex = nullptr;
+    SessionManager* sessions = nullptr;
 };
+
+// ---------- 鉴权工具（会话 token 校验） ----------
+namespace Auth {
+    // 请求体必须携带有效 token；成功返回绑定用户 id
+    bool requireLogin(HandlerContext& ctx, const nlohmann::json& j,
+                      int& outUserId, std::string& errMsg);
+    // token 必须有效且绑定到指定 user_id（防伪造他人身份）
+    bool requireUser(HandlerContext& ctx, const nlohmann::json& j,
+                     int userId, std::string& errMsg);
+    // 管理员权限：token 有效且绑定用户 level >= 2
+    bool requireAdmin(HandlerContext& ctx, const nlohmann::json& j,
+                      int& outUserId, std::string& errMsg);
+}
 
 // 工具：构造错误响应
 std::string makeError(int errCode, const std::string& msg);
@@ -56,6 +72,15 @@ private:
 class ProductDetailHandler : public ICommandHandler {
 public:
     explicit ProductDetailHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+
+// ---------- 商品搜索（名称/分类/描述模糊查询） ----------
+class SearchProductHandler : public ICommandHandler {
+public:
+    explicit SearchProductHandler(HandlerContext& ctx) : ctx_(ctx) {}
     bool execute(const std::string& req, std::string& resp) override;
 private:
     HandlerContext& ctx_;
@@ -119,6 +144,44 @@ private:
 class ReturnHandler : public ICommandHandler {
 public:
     explicit ReturnHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+
+// ---------- 销售数据统计（选对象/选区间/自动聚合） ----------
+class SalesStatsHandler : public ICommandHandler {
+public:
+    explicit SalesStatsHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+    // 组装 WHERE 过滤子句（按用户/商品/时间区间），返回子句字符串（含 ' WHERE ' 或 ' AND '）
+    std::string buildFilter(int days, int productId, int userId, bool orderLevel);
+};
+
+// ---------- 客服消息（社交：联系客服，服务端回显并自动应答） ----------
+class ServiceMsgHandler : public ICommandHandler {
+public:
+    explicit ServiceMsgHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+
+// ---------- 退货单查询（用户查自己的；管理员可查全部） ----------
+class ReturnListHandler : public ICommandHandler {
+public:
+    explicit ReturnListHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+
+// ---------- 退货审核（管理员：通过则回补库存+订单置取消；拒绝则恢复原状态） ----------
+class ReturnAuditHandler : public ICommandHandler {
+public:
+    explicit ReturnAuditHandler(HandlerContext& ctx) : ctx_(ctx) {}
     bool execute(const std::string& req, std::string& resp) override;
 private:
     HandlerContext& ctx_;

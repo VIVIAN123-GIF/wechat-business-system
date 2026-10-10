@@ -12,7 +12,7 @@ std::vector<Product> ProductRepository::findAll() {
         Product p;
         p.id   = sqlite3_column_int(stmt, 0);
         p.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        p.price = sqlite3_column_double(stmt, 2);
+        p.price = sqlite3_column_int(stmt, 2);
         p.stock = sqlite3_column_int(stmt, 3);
         if (sqlite3_column_type(stmt, 4) != SQLITE_NULL)
             p.description = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
@@ -36,7 +36,7 @@ std::shared_ptr<Product> ProductRepository::findById(int id) {
         p = std::make_shared<Product>();
         p->id    = sqlite3_column_int(stmt, 0);
         p->name  = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        p->price = sqlite3_column_double(stmt, 2);
+        p->price = sqlite3_column_int(stmt, 2);
         p->stock = sqlite3_column_int(stmt, 3);
         if (sqlite3_column_type(stmt, 4) != SQLITE_NULL)
             p->description = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
@@ -46,6 +46,39 @@ std::shared_ptr<Product> ProductRepository::findById(int id) {
     }
     sqlite3_finalize(stmt);
     return p;
+}
+
+std::vector<Product> ProductRepository::findByKeyword(const std::string& keyword) {
+    std::vector<Product> result;
+    if (keyword.empty()) return result;
+    std::string esc;
+    for (char ch : keyword) {
+        if (ch == '%' || ch == '_' || ch == '\\') esc += '\\';
+        esc += ch;
+    }
+    std::string sql =
+        "SELECT id, name, price, stock, description, category, status "
+        "FROM products WHERE status = 1 AND ("
+        " name LIKE ? ESCAPE '\\' OR category LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) return result;
+    std::string pattern = "%" + esc + "%";
+    sqlite3_bind_text(stmt, 1, pattern.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, pattern.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, pattern.c_str(), -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        Product p;
+        p.id = sqlite3_column_int(stmt, 0);
+        p.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        p.price = sqlite3_column_int(stmt, 2);
+        p.stock = sqlite3_column_int(stmt, 3);
+        if (sqlite3_column_type(stmt, 4) != SQLITE_NULL) p.description = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        if (sqlite3_column_type(stmt, 5) != SQLITE_NULL) p.category = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+        p.status = sqlite3_column_int(stmt, 6);
+        result.push_back(p);
+    }
+    sqlite3_finalize(stmt);
+    return result;
 }
 
 bool ProductRepository::deductStock(int id, int quantity) {
@@ -58,17 +91,6 @@ bool ProductRepository::deductStock(int id, int quantity) {
     sqlite3_bind_int(stmt, 2, id);
     sqlite3_bind_int(stmt, 3, quantity);
     bool ok = (sqlite3_step(stmt) == SQLITE_DONE) && (sqlite3_changes(db_) > 0);
-    sqlite3_finalize(stmt);
-    return ok;
-}
-
-bool ProductRepository::updateStock(int id, int newStock) {
-    const char* sql = "UPDATE products SET stock = ?, update_time = datetime('now') WHERE id = ?";
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
-    sqlite3_bind_int(stmt, 1, newStock);
-    sqlite3_bind_int(stmt, 2, id);
-    bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
     sqlite3_finalize(stmt);
     return ok;
 }
@@ -92,9 +114,9 @@ bool OrderRepository::insert(Order& order) {
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
     sqlite3_bind_text(stmt, 1, order.orderNo.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 2, order.userId);
-    sqlite3_bind_double(stmt, 3, order.totalAmount);
-    sqlite3_bind_double(stmt, 4, order.discountAmount);
-    sqlite3_bind_double(stmt, 5, order.finalAmount);
+    sqlite3_bind_int(stmt, 3, order.totalAmount);
+    sqlite3_bind_int(stmt, 4, order.discountAmount);
+    sqlite3_bind_int(stmt, 5, order.finalAmount);
     sqlite3_bind_int(stmt, 6, order.status);
     bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
     sqlite3_finalize(stmt);
@@ -111,7 +133,7 @@ bool OrderRepository::insert(Order& order) {
         sqlite3_bind_int(stmt2, 1, order.id);
         sqlite3_bind_int(stmt2, 2, item.productId);
         sqlite3_bind_text(stmt2, 3, item.productName.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_double(stmt2, 4, item.price);
+        sqlite3_bind_int(stmt2, 4, item.price);
         sqlite3_bind_int(stmt2, 5, item.quantity);
         ok = (sqlite3_step(stmt2) == SQLITE_DONE);
         sqlite3_finalize(stmt2);
@@ -125,9 +147,9 @@ Order OrderRepository::loadOrderWithItems(sqlite3_stmt* stmt) {
     o.id            = sqlite3_column_int(stmt, 0);
     o.orderNo       = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
     o.userId        = sqlite3_column_int(stmt, 2);
-    o.totalAmount   = sqlite3_column_double(stmt, 3);
-    o.discountAmount= sqlite3_column_double(stmt, 4);
-    o.finalAmount   = sqlite3_column_double(stmt, 5);
+    o.totalAmount   = sqlite3_column_int(stmt, 3);
+    o.discountAmount= sqlite3_column_int(stmt, 4);
+    o.finalAmount   = sqlite3_column_int(stmt, 5);
     o.status        = sqlite3_column_int(stmt, 6);
     if (sqlite3_column_type(stmt, 7) != SQLITE_NULL)
         o.createTime = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
@@ -160,7 +182,7 @@ std::vector<Order> OrderRepository::findByUserId(int userId) {
             it.orderId     = sqlite3_column_int(stmt2, 1);
             it.productId   = sqlite3_column_int(stmt2, 2);
             it.productName = reinterpret_cast<const char*>(sqlite3_column_text(stmt2, 3));
-            it.price       = sqlite3_column_double(stmt2, 4);
+            it.price       = sqlite3_column_int(stmt2, 4);
             it.quantity    = sqlite3_column_int(stmt2, 5);
             order.items.push_back(it);
         }
@@ -193,7 +215,7 @@ std::shared_ptr<Order> OrderRepository::findById(int orderId) {
             it.orderId     = sqlite3_column_int(stmt2, 1);
             it.productId   = sqlite3_column_int(stmt2, 2);
             it.productName = reinterpret_cast<const char*>(sqlite3_column_text(stmt2, 3));
-            it.price       = sqlite3_column_double(stmt2, 4);
+            it.price       = sqlite3_column_int(stmt2, 4);
             it.quantity    = sqlite3_column_int(stmt2, 5);
             o->items.push_back(it);
         }
@@ -209,6 +231,20 @@ bool OrderRepository::updateStatus(int orderId, int newStatus) {
     sqlite3_bind_int(stmt, 1, newStatus);
     sqlite3_bind_int(stmt, 2, orderId);
     bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool OrderRepository::updateStatusIf(int orderId, int newStatus, int s1, int s2, int s3) {
+    const char* sql = "UPDATE orders SET status = ? WHERE id = ? AND status IN (?, ?, ?)";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_int(stmt, 1, newStatus);
+    sqlite3_bind_int(stmt, 2, orderId);
+    sqlite3_bind_int(stmt, 3, s1);
+    sqlite3_bind_int(stmt, 4, s2);
+    sqlite3_bind_int(stmt, 5, s3);
+    bool ok = (sqlite3_step(stmt) == SQLITE_DONE) && (sqlite3_changes(db_) > 0);
     sqlite3_finalize(stmt);
     return ok;
 }
@@ -280,9 +316,9 @@ bool UserRepository::updateLastLogin(int userId) {
 }
 
 // ---------------- ReturnRepository ----------------
-bool ReturnRepository::insert(const ReturnRequest& req) {
-    const char* sql = "INSERT INTO returns (order_id, user_id, reason, status, apply_time) "
-                      "VALUES (?, ?, ?, ?, datetime('now'))";
+bool ReturnRepository::insert(ReturnRequest& req) {
+    const char* sql = "INSERT INTO returns (order_id, user_id, reason, status, orig_status, apply_time) "
+                      "VALUES (?, ?, ?, ?, ?, datetime('now'))";
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
     sqlite3_bind_int(stmt, 1, req.orderId);
@@ -290,8 +326,10 @@ bool ReturnRepository::insert(const ReturnRequest& req) {
     if (req.reason.empty()) sqlite3_bind_null(stmt, 3);
     else sqlite3_bind_text(stmt, 3, req.reason.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 4, req.status);
+    sqlite3_bind_int(stmt, 5, req.origStatus);
     bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
     sqlite3_finalize(stmt);
+    if (ok) req.id = static_cast<int>(sqlite3_last_insert_rowid(db_));
     return ok;
 }
 
@@ -320,6 +358,61 @@ std::vector<ReturnRequest> ReturnRepository::findByUserId(int userId) {
     return result;
 }
 
+std::vector<ReturnRequest> ReturnRepository::findAll() {
+    std::vector<ReturnRequest> result;
+    const char* sql = "SELECT id, order_id, user_id, reason, status, orig_status, apply_time, audit_time "
+                      "FROM returns ORDER BY id DESC";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return result;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        ReturnRequest r;
+        r.id = sqlite3_column_int(stmt, 0);
+        r.orderId = sqlite3_column_int(stmt, 1);
+        r.userId = sqlite3_column_int(stmt, 2);
+        if (sqlite3_column_type(stmt, 3) != SQLITE_NULL) r.reason = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        r.status = sqlite3_column_int(stmt, 4);
+        r.origStatus = sqlite3_column_int(stmt, 5);
+        if (sqlite3_column_type(stmt, 6) != SQLITE_NULL) r.applyTime = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
+        if (sqlite3_column_type(stmt, 7) != SQLITE_NULL) r.auditTime = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
+        result.push_back(r);
+    }
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+std::shared_ptr<ReturnRequest> ReturnRepository::findById(int returnId) {
+    const char* sql = "SELECT id, order_id, user_id, reason, status, orig_status, apply_time, audit_time "
+                      "FROM returns WHERE id = ?";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return nullptr;
+    sqlite3_bind_int(stmt, 1, returnId);
+    std::shared_ptr<ReturnRequest> r;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        r = std::make_shared<ReturnRequest>();
+        r->id = sqlite3_column_int(stmt, 0);
+        r->orderId = sqlite3_column_int(stmt, 1);
+        r->userId = sqlite3_column_int(stmt, 2);
+        if (sqlite3_column_type(stmt, 3) != SQLITE_NULL) r->reason = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        r->status = sqlite3_column_int(stmt, 4);
+        r->origStatus = sqlite3_column_int(stmt, 5);
+        if (sqlite3_column_type(stmt, 6) != SQLITE_NULL) r->applyTime = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
+        if (sqlite3_column_type(stmt, 7) != SQLITE_NULL) r->auditTime = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
+    }
+    sqlite3_finalize(stmt);
+    return r;
+}
+
+bool ReturnRepository::updateStatus(int returnId, int newStatus) {
+    const char* sql = "UPDATE returns SET status = ?, audit_time = datetime('now') WHERE id = ?";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_int(stmt, 1, newStatus);
+    sqlite3_bind_int(stmt, 2, returnId);
+    bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
 // ---------------- PromotionRepository ----------------
 std::vector<Promotion> PromotionRepository::findAllAvailable() {
     std::vector<Promotion> result;
@@ -334,9 +427,12 @@ std::vector<Promotion> PromotionRepository::findAllAvailable() {
         p.name   = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
         p.type   = sqlite3_column_int(stmt, 2);
         p.param1 = sqlite3_column_double(stmt, 3);
-        if (sqlite3_column_type(stmt, 4) != SQLITE_NULL)
-            p.param2 = sqlite3_column_double(stmt, 4);
-        p.status = sqlite3_column_int(stmt, 5);
+        if (sqlite3_column_type(stmt, 4) != SQLITE_NULL) p.param2 = sqlite3_column_double(stmt, 4);
+        if (sqlite3_column_type(stmt, 5) != SQLITE_NULL) p.param3 = sqlite3_column_double(stmt, 5);
+        if (sqlite3_column_type(stmt, 6) != SQLITE_NULL) p.param4 = sqlite3_column_double(stmt, 6);
+        if (sqlite3_column_type(stmt, 7) != SQLITE_NULL) p.param5 = sqlite3_column_double(stmt, 7);
+        if (sqlite3_column_type(stmt, 8) != SQLITE_NULL) p.param6 = sqlite3_column_double(stmt, 8);
+        p.status = sqlite3_column_int(stmt, 9);
         result.push_back(p);
     }
     sqlite3_finalize(stmt);
@@ -344,7 +440,7 @@ std::vector<Promotion> PromotionRepository::findAllAvailable() {
 }
 
 std::shared_ptr<Promotion> PromotionRepository::findById(int id) {
-    const char* sql = "SELECT id, name, type, param1, param2, status FROM promotions WHERE id = ?";
+    const char* sql = "SELECT id, name, type, param1, param2, param3, param4, param5, param6, status FROM promotions WHERE id = ?";
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return nullptr;
     sqlite3_bind_int(stmt, 1, id);
@@ -355,9 +451,12 @@ std::shared_ptr<Promotion> PromotionRepository::findById(int id) {
         p->name   = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
         p->type   = sqlite3_column_int(stmt, 2);
         p->param1 = sqlite3_column_double(stmt, 3);
-        if (sqlite3_column_type(stmt, 4) != SQLITE_NULL)
-            p->param2 = sqlite3_column_double(stmt, 4);
-        p->status = sqlite3_column_int(stmt, 5);
+        if (sqlite3_column_type(stmt, 4) != SQLITE_NULL) p->param2 = sqlite3_column_double(stmt, 4);
+        if (sqlite3_column_type(stmt, 5) != SQLITE_NULL) p->param3 = sqlite3_column_double(stmt, 5);
+        if (sqlite3_column_type(stmt, 6) != SQLITE_NULL) p->param4 = sqlite3_column_double(stmt, 6);
+        if (sqlite3_column_type(stmt, 7) != SQLITE_NULL) p->param5 = sqlite3_column_double(stmt, 7);
+        if (sqlite3_column_type(stmt, 8) != SQLITE_NULL) p->param6 = sqlite3_column_double(stmt, 8);
+        p->status = sqlite3_column_int(stmt, 9);
     }
     sqlite3_finalize(stmt);
     return p;

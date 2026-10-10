@@ -1,17 +1,29 @@
 #include "ClientController.h"
 #include "Renderers.h"
 #include "../common/ProtocolHeader.h"
+#include "../common/SHA256.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
+#include <iomanip>
 #include <limits>
 
 using json = nlohmann::json;
 
 ClientController::ClientController()
     : tcpClient_(std::make_unique<TcpClient>("127.0.0.1", 8888)),
-      renderer_(std::make_unique<FancyRenderer>()) {}
+      renderer_(createSkin(2)) {}
 
 ClientController::~ClientController() = default;
+
+// ---------------- 皮肤工厂（抽象工厂） ----------------
+std::unique_ptr<UIRenderer> ClientController::createSkin(int skinIndex) {
+    switch (skinIndex) {
+        case 1: return BlueThemeFactory().createSimple();
+        case 3: return PinkThemeFactory().createFancy();
+        case 2:
+        default: return GreenThemeFactory().createFancy();
+    }
+}
 
 // ---------------- 输入工具（容错） ----------------
 int ClientController::getUserInputInt(const std::string& prompt, int min, int max) {
@@ -37,7 +49,16 @@ int ClientController::getUserInputInt(const std::string& prompt, int min, int ma
 
 bool ClientController::sendAndRecv(int code, const std::string& body,
                                    int& respCode, std::string& respBody) {
-    if (!tcpClient_->sendRequest(code, body)) {
+    // 自动注入会话 token（鉴权）
+    std::string outBody = body;
+    if (!token_.empty()) {
+        try {
+            auto j = json::parse(body.empty() ? "{}" : body);
+            if (!j.contains("token")) j["token"] = token_;
+            outBody = j.dump();
+        } catch (...) { outBody = body; }
+    }
+    if (!tcpClient_->sendRequest(code, outBody)) {
         renderer_->drawMessage("发送失败，请检查服务端是否运行", true);
         return false;
     }
@@ -45,7 +66,6 @@ bool ClientController::sendAndRecv(int code, const std::string& body,
         renderer_->drawMessage("接收响应超时或连接断开", true);
         return false;
     }
-    // 错误响应统一解析提示
     if (respCode == ProtocolConstants::S_ERR_GENERAL ||
         respCode == ProtocolConstants::S_ERR_UNAUTH) {
         try {
@@ -63,14 +83,12 @@ bool ClientController::sendAndRecv(int code, const std::string& body,
 // ---------------- 流程 ----------------
 void ClientController::selectUIStyle() {
     renderer_->drawWelcome();
-    std::cout << "\n选择 UI 风格：\n1. 极简风格\n2. 详细风格\n";
-    int choice = getUserInputInt("请选择 (1-2): ", 1, 2);
-    if (choice == 1) {
-        renderer_ = std::make_unique<SimpleRenderer>();  // 策略模式动态切换
-    } else {
-        renderer_ = std::make_unique<FancyRenderer>();
-    }
-    renderer_->drawMessage("已切换到" + renderer_->getStyleName());
+    std::cout << "\n选择 UI 风格：\n1. 极简×蓝\n2. 详细×绿\n3. 详细×粉\n";
+    int choice = getUserInputInt("请选择 (1-3): ", 1, 3);
+    skinIndex_ = choice;
+    renderer_ = createSkin(choice);
+    renderer_->drawMessage("已切换到" + renderer_->getThemeName() + "-" +
+                           renderer_->getStyleName());
 }
 
 bool ClientController::connectServer() {
@@ -80,9 +98,7 @@ bool ClientController::connectServer() {
         return false;
     }
     renderer_->drawMessage("连接成功");
-    // 心跳验证
-    int code = 0;
-    std::string body;
+    int code = 0; std::string body;
     if (sendAndRecv(ProtocolConstants::C_REQ_HEARTBEAT, "{}", code, body)) {
         renderer_->drawMessage("心跳正常，服务端在线");
     }
@@ -95,7 +111,7 @@ bool ClientController::loginLoop() {
         int choice = getUserInputInt("", 0, 2);
         if (choice == 0) return false;
 
-        if (choice == 1) {  // 登录
+        if (choice == 1) {  // 登录（密码本地哈希后传输）
             std::string username, password;
             std::cout << "用户名: ";
             std::getline(std::cin, username);
@@ -104,9 +120,8 @@ bool ClientController::loginLoop() {
 
             json req;
             req["username"] = username;
-            req["password"] = password;
-            int respCode = 0;
-            std::string respBody;
+            req["password"] = hashPassword(username, password);
+            int respCode = 0; std::string respBody;
             if (!sendAndRecv(ProtocolConstants::C_REQ_LOGIN, req.dump(), respCode, respBody)) {
                 continue;
             }
@@ -115,6 +130,7 @@ bool ClientController::loginLoop() {
                 userId_ = j["user_id"];
                 username_ = username;
                 level_ = j.value("level", 1);
+                token_ = j.value("token", "");
                 isLoggedIn_ = true;
                 renderer_->drawMessage("欢迎，" + username_ +
                                        (level_ >= 2 ? "（VIP 会员，享额外95折）" : ""));
@@ -128,12 +144,10 @@ bool ClientController::loginLoop() {
             std::getline(std::cin, username);
             std::cout << "密码(至少4位): ";
             std::getline(std::cin, password);
-
             json req;
             req["username"] = username;
-            req["password"] = password;
-            int respCode = 0;
-            std::string respBody;
+            req["password"] = hashPassword(username, password);
+            int respCode = 0; std::string respBody;
             if (sendAndRecv(ProtocolConstants::C_REQ_REGISTER, req.dump(), respCode, respBody)) {
                 renderer_->drawMessage("注册成功，请登录");
             }
@@ -145,7 +159,7 @@ void ClientController::mainLoop() {
     while (true) {
         renderer_->drawDivider();
         renderer_->drawMainMenu();
-        int choice = getUserInputInt("", 0, 6);
+        int choice = getUserInputInt("", 0, 11);
         switch (choice) {
             case 1: handleShowProducts(); break;
             case 2: handleCartManagement(); break;
@@ -153,6 +167,11 @@ void ClientController::mainLoop() {
             case 4: handleOrders(); break;
             case 5: handleReturn(); break;
             case 6: handleSwitchStyle(); break;
+            case 7: handleStats(); break;
+            case 8: handleSearch(); break;
+            case 9: handleServiceMsg(); break;
+            case 10: handleMyReturns(); break;
+            case 11: handleAuditReturns(); break;
             case 0:
                 renderer_->drawMessage("感谢使用，再见！");
                 return;
@@ -170,8 +189,7 @@ void ClientController::run() {
 
 // ---------------- 功能 ----------------
 void ClientController::handleShowProducts() {
-    int respCode = 0;
-    std::string respBody;
+    int respCode = 0; std::string respBody;
     if (!sendAndRecv(ProtocolConstants::C_REQ_PRODUCT_LIST, "{}", respCode, respBody)) return;
 
     std::vector<ProductInfo> products;
@@ -181,7 +199,7 @@ void ClientController::handleShowProducts() {
             ProductInfo p;
             p.id    = item["id"];
             p.name  = item["name"];
-            p.price = item["price"];
+            p.price = item.value("price", 0) / 100.0;  // 服务端发分，转元
             p.stock = item["stock"];
             p.category = item.value("category", "");
             products.push_back(p);
@@ -192,13 +210,32 @@ void ClientController::handleShowProducts() {
     }
     renderer_->drawProductList(products);
 
-    // 支持加入购物车
-    std::cout << "\n加入购物车？输入商品ID（0 返回）: ";
+    // 商品详情入口（1002/2002）
+    std::cout << "\n查看商品详情？输入商品ID（0 跳过）: ";
     int pid = getUserInputInt("", 0, 100000);
+    if (pid > 0) {
+        json detReq; detReq["product_id"] = pid;
+        int detCode = 0; std::string detBody;
+        if (sendAndRecv(ProtocolConstants::C_REQ_PRODUCT_DETAIL, detReq.dump(), detCode, detBody)) {
+            try {
+                auto dj = json::parse(detBody);
+                ProductInfo p;
+                p.id = dj["id"]; p.name = dj["name"];
+                p.price = dj.value("price", 0) / 100.0;
+                p.stock = dj["stock"];
+                p.category = dj.value("category", "");
+                renderer_->drawProductDetail(p);
+            } catch (...) {
+                renderer_->drawMessage("商品详情解析失败", true);
+            }
+        }
+    }
+
+    std::cout << "\n加入购物车？输入商品ID（0 返回）: ";
+    pid = getUserInputInt("", 0, 100000);
     if (pid == 0) return;
     int qty = getUserInputInt("数量: ", 1, 9999);
 
-    // 校验库存（服务端）
     json req;
     req["user_id"] = userId_;
     req["product_id"] = pid;
@@ -244,68 +281,63 @@ void ClientController::handleCheckout() {
     }
     renderer_->drawCart(cart_.getItems(), cart_.getTotalPrice());
 
-    // 拉取可用促销
-    int respCode = 0;
-    std::string respBody;
+    int respCode = 0; std::string respBody;
     std::vector<PromoInfo> promos;
-    if (sendAndRecv(ProtocolConstants::C_REQ_PROMO_LIST, "{}", respCode, respBody)) {
+    json promoReq; promoReq["user_id"] = userId_;
+    if (sendAndRecv(ProtocolConstants::C_REQ_PROMO_LIST, promoReq.dump(), respCode, respBody)) {
         try {
             auto j = json::parse(respBody);
-            for (auto& item : j["promotions"]) {
-                PromoInfo p;
-                p.id    = item["id"];
-                p.name  = item["name"];
-                p.type  = item["type"];
-                p.param1 = item.value("param1", 0.0);
-                p.param2 = item.value("param2", 0.0);
-                promos.push_back(p);
+            for (auto& p : j["promos"]) {
+                PromoInfo pi;
+                pi.id = p["id"]; pi.name = p["name"];
+                pi.type = p["type"]; pi.param1 = p.value("param1", 0.0);
+                pi.param2 = p.value("param2", 0.0);
+                promos.push_back(pi);
             }
-        } catch (...) {
-            renderer_->drawMessage("促销数据解析失败", true);
-            return;
-        }
-    } else {
-        return;
+        } catch (...) {}
     }
-
     renderer_->drawPromoList(promos);
-    std::cout << "选择要叠加的促销ID（多个用空格分隔，直接回车不使用促销）: ";
+
+    // 选择促销（可多选，逗号分隔ID）
+    std::vector<int> promoIds;
+    std::cout << "\n选择促销ID（多个用逗号分隔，0=不用）: ";
     std::string line;
     std::getline(std::cin, line);
-    std::vector<int> promoIds;
-    {
-        std::istringstream iss(line);
-        int id;
-        while (iss >> id) promoIds.push_back(id);
-    }
-
-    json req;
-    req["user_id"] = userId_;
-    req["items"] = json::parse(cart_.itemsToJson());
-    req["promo_ids"] = promoIds;
-
-    renderer_->drawMessage("正在提交订单，请稍候...");
-    if (!sendAndRecv(ProtocolConstants::C_REQ_CHECKOUT, req.dump(), respCode, respBody)) {
-        return;
-    }
-    try {
-        auto j = json::parse(respBody);
-        renderer_->drawOrderResult(j["order_no"], j["original"], j["discount"], j["final"]);
-        if (j.contains("promo_desc")) {
-            renderer_->drawMessage("促销明细: " + j["promo_desc"].get<std::string>());
+    if (line != "0" && !line.empty()) {
+        size_t pos = 0;
+        while (pos < line.size()) {
+            size_t comma = line.find(',', pos);
+            if (comma == std::string::npos) comma = line.size();
+            int id = std::atoi(line.substr(pos, comma - pos).c_str());
+            if (id > 0) promoIds.push_back(id);
+            pos = comma + 1;
         }
-        cart_.clear();
-        renderer_->drawMessage("订单生成成功，购物车已清空");
-    } catch (...) {
-        renderer_->drawMessage("结算响应解析失败", true);
+    }
+
+    json req = json::parse(cart_.itemsToJson());
+    req["user_id"] = userId_;
+    req["promo_ids"] = promoIds;
+    if (sendAndRecv(ProtocolConstants::C_REQ_CHECKOUT, req.dump(), respCode, respBody)) {
+        try {
+            auto j = json::parse(respBody);
+            renderer_->drawOrderResult(j["order_no"].get<std::string>(),
+                j["original"].get<int>() / 100.0,
+                j["discount"].get<int>() / 100.0,
+                j["final"].get<int>() / 100.0);
+            if (j.contains("promo_desc")) {
+                renderer_->drawMessage("促销明细: " + j["promo_desc"].get<std::string>());
+            }
+            cart_.clear();
+            renderer_->drawMessage("订单生成成功，购物车已清空");
+        } catch (...) {
+            renderer_->drawMessage("结算响应解析失败", true);
+        }
     }
 }
 
 void ClientController::handleOrders() {
-    json req;
-    req["user_id"] = userId_;
-    int respCode = 0;
-    std::string respBody;
+    json req; req["user_id"] = userId_;
+    int respCode = 0; std::string respBody;
     if (!sendAndRecv(ProtocolConstants::C_REQ_ORDER_QUERY, req.dump(), respCode, respBody)) return;
 
     std::vector<OrderInfo> orders;
@@ -315,16 +347,17 @@ void ClientController::handleOrders() {
             OrderInfo info;
             info.orderId   = o["order_id"];
             info.orderNo   = o["order_no"];
-            info.original  = o["original"];
-            info.discount  = o["discount"];
-            info.final     = o["final"];
+            info.original  = o.value("original", 0) / 100.0;
+            info.discount  = o.value("discount", 0) / 100.0;
+            info.final     = o.value("final", 0) / 100.0;
             info.status    = o["status"];
+            info.returnStatus = o.value("return_status", 0);
             info.createTime = o.value("create_time", "");
             for (auto& it : o["items"]) {
                 CartItem ci;
                 ci.productId   = it["product_id"];
                 ci.productName = it["product_name"];
-                ci.price       = it["price"];
+                ci.price       = it.value("price", 0) / 100.0;
                 ci.quantity    = it["quantity"];
                 info.items.push_back(ci);
             }
@@ -350,18 +383,164 @@ void ClientController::handleReturn() {
     req["user_id"] = userId_;
     req["order_id"] = orderId;
     req["reason"] = reason;
-    int respCode = 0;
-    std::string respBody;
+    int respCode = 0; std::string respBody;
     if (sendAndRecv(ProtocolConstants::C_REQ_RETURN, req.dump(), respCode, respBody)) {
         renderer_->drawMessage("退货申请已提交，等待审核");
     }
 }
 
-void ClientController::handleSwitchStyle() {
-    if (renderer_->getStyleName() == "极简风格") {
-        renderer_ = std::make_unique<FancyRenderer>();
-    } else {
-        renderer_ = std::make_unique<SimpleRenderer>();
+void ClientController::handleMyReturns() {
+    json req; req["user_id"] = userId_;
+    int respCode = 0; std::string respBody;
+    if (!sendAndRecv(ProtocolConstants::C_REQ_RETURN_LIST, req.dump(), respCode, respBody)) return;
+    try {
+        auto j = json::parse(respBody);
+        std::cout << "\n====== 我的退货进度 ======\n";
+        std::cout << std::left << std::setw(8) << "退货ID"
+                  << std::setw(8) << "订单ID" << std::setw(10) << "状态"
+                  << std::setw(20) << "申请时间" << "原因\n";
+        const char* st[] = {"待审核", "已通过", "已拒绝"};
+        for (auto& r : j["returns"]) {
+            std::cout << std::left << std::setw(8) << r["return_id"].get<int>()
+                      << std::setw(8) << r["order_id"].get<int>()
+                      << std::setw(10) << st[r.value("status", 0)]
+                      << std::setw(20) << r.value("apply_time", "")
+                      << r.value("reason", "") << "\n";
+        }
+    } catch (...) {
+        renderer_->drawMessage("退货进度解析失败", true);
     }
-    renderer_->drawMessage("已切换至" + renderer_->getStyleName());
+}
+
+void ClientController::handleAuditReturns() {
+    json req; req["user_id"] = userId_;
+    int respCode = 0; std::string respBody;
+    if (!sendAndRecv(ProtocolConstants::C_REQ_RETURN_LIST, req.dump(), respCode, respBody)) return;
+    try {
+        auto j = json::parse(respBody);
+        std::cout << "\n====== 退货审核（管理员）======\n";
+        std::cout << std::left << std::setw(8) << "退货ID"
+                  << std::setw(8) << "订单ID" << std::setw(8) << "用户"
+                  << std::setw(10) << "状态" << "原因\n";
+        const char* st[] = {"待审核", "已通过", "已拒绝"};
+        for (auto& r : j["returns"]) {
+            std::cout << std::left << std::setw(8) << r["return_id"].get<int>()
+                      << std::setw(8) << r["order_id"].get<int>()
+                      << std::setw(8) << r["user_id"].get<int>()
+                      << std::setw(10) << st[r.value("status", 0)]
+                      << r.value("reason", "") << "\n";
+        }
+    } catch (...) { return; }
+
+    int returnId = getUserInputInt("\n审核退货ID（0 返回）: ", 0, 1000000);
+    if (returnId == 0) return;
+    int approve = getUserInputInt("1=通过（回补库存） 2=拒绝: ", 1, 2);
+    json req2;
+    req2["user_id"] = userId_;
+    req2["return_id"] = returnId;
+    req2["approve"] = (approve == 1);
+    if (sendAndRecv(ProtocolConstants::C_REQ_RETURN_AUDIT, req2.dump(), respCode, respBody)) {
+        renderer_->drawMessage(approve == 1 ? "已通过，库存已回补" : "已拒绝，订单恢复原状态");
+    }
+}
+
+void ClientController::handleStats() {
+    json req;
+    req["user_id"] = userId_; req["days"] = 0;
+    req["product_id"] = 0;  // 0=全部商品（管理员统计全量）
+    int respCode = 0; std::string respBody;
+    if (!sendAndRecv(ProtocolConstants::C_REQ_STATS, req.dump(), respCode, respBody)) return;
+    try {
+        auto j = json::parse(respBody);
+        renderer_->drawDivider();
+        renderer_->drawMessage("====== 销售数据统计分析 ======");
+        auto s = j["summary"];
+        std::cout << "订单数: " << s["order_count"].get<int>()
+                  << " | 商品总价: " << std::fixed << std::setprecision(2) << s.value("total_amount",0)/100.0
+                  << " | 优惠: " << s.value("discount",0)/100.0
+                  << " | 实收: " << s.value("final_amount",0)/100.0
+                  << " | 客单价: " << s.value("avg_order",0)/100.0
+                  << " | 退货申请: " << s["return_count"].get<int>() << "\n";
+
+        std::cout << "\n[按日销售趋势]\n日期            订单数  销售额\n";
+        for (auto& d : j["daily"]) {
+            std::cout << std::left << std::setw(16) << d.value("date","")
+                      << std::setw(8) << d["order_count"].get<int>()
+                      << std::fixed << std::setprecision(2) << d.value("amount",0)/100.0 << "\n";
+        }
+        std::cout << "\n[热销商品排行]\n商品ID  名称          销量  销售额\n";
+        for (auto& p : j["top_products"]) {
+            std::cout << std::left << std::setw(8) << p["product_id"].get<int>()
+                      << std::setw(14) << p.value("name","")
+                      << std::setw(6) << p["qty"].get<int>()
+                      << std::fixed << std::setprecision(2) << p.value("amount",0)/100.0 << "\n";
+        }
+        if (j.contains("top_users")) {
+            std::cout << "\n[用户贡献排行]\n用户ID  订单数  消费额\n";
+            for (auto& u : j["top_users"]) {
+                std::cout << std::left << std::setw(8) << u["user_id"].get<int>()
+                          << std::setw(8) << u["order_count"].get<int>()
+                          << std::fixed << std::setprecision(2) << u.value("amount",0)/100.0 << "\n";
+            }
+        }
+    } catch (...) {
+        renderer_->drawMessage("统计数据解析失败", true);
+    }
+}
+
+void ClientController::handleSearch() {
+    std::cout << "搜索关键词: ";
+    std::string keyword;
+    std::getline(std::cin, keyword);
+    if (keyword.empty()) return;
+    if (keyword.size() > 100) keyword.resize(100);
+
+    json req;
+    req["user_id"] = userId_;
+    req["keyword"] = keyword;
+    int respCode = 0; std::string respBody;
+    if (!sendAndRecv(ProtocolConstants::C_REQ_SEARCH, req.dump(), respCode, respBody)) return;
+    try {
+        auto j = json::parse(respBody);
+        std::vector<ProductInfo> products;
+        for (auto& item : j["products"]) {
+            ProductInfo p;
+            p.id = item["id"]; p.name = item["name"];
+            p.price = item.value("price", 0) / 100.0;
+            p.stock = item["stock"];
+            p.category = item.value("category", "");
+            products.push_back(p);
+        }
+        renderer_->drawProductList(products);
+    } catch (...) {
+        renderer_->drawMessage("搜索响应解析失败", true);
+    }
+}
+
+void ClientController::handleServiceMsg() {
+    std::cout << "联系客服（500字以内）: ";
+    std::string msg;
+    std::getline(std::cin, msg);
+    if (msg.empty()) return;
+    if (msg.size() > 500) msg.resize(500);
+
+    json req;
+    req["user_id"] = userId_;
+    req["message"] = msg;
+    int respCode = 0; std::string respBody;
+    if (sendAndRecv(ProtocolConstants::C_REQ_SERVICE_MSG, req.dump(), respCode, respBody)) {
+        try {
+            auto j = json::parse(respBody);
+            renderer_->drawMessage("客服已收到: " + j.value("echo", ""));
+            renderer_->drawMessage("自动应答: " + j.value("reply", "我们会尽快联系您"));
+        } catch (...) {}
+    }
+}
+
+void ClientController::handleSwitchStyle() {
+    int choice = getUserInputInt("\n选择皮肤：\n1.极简×蓝 2.详细×绿 3.详细×粉\n请选择(1-3): ", 1, 3);
+    skinIndex_ = choice;
+    renderer_ = createSkin(choice);
+    renderer_->drawMessage("已切换到" + renderer_->getThemeName() + "-" +
+                           renderer_->getStyleName());
 }

@@ -1,38 +1,14 @@
 #include "TcpServer.h"
 #include "../common/ProtocolEncoder.h"
+#include "../common/NetUtil.h"
 #include "database/SQLiteHelper.h"
 #include "Logger.h"
 #include <iostream>
 
-namespace {
-// 读取完整报文：先读满 16 字节头，再按 Length 读满数据体（粘包/半包处理）
-bool recvExact(SOCKET fd, char* buf, int len) {
-    int received = 0;
-    while (received < len) {
-        int ret = recv(fd, buf + received, len - received, 0);
-        if (ret <= 0) return false;  // 连接关闭或错误
-        received += ret;
-    }
-    return true;
-}
-
-bool recvFullPacket(SOCKET fd, uint32_t& outCode, std::string& outBody) {
-    char headBuf[sizeof(ProtocolHeader)];
-    if (!recvExact(fd, headBuf, sizeof(ProtocolHeader))) return false;
-    ProtocolHeader header;
-    std::memcpy(&header, headBuf, sizeof(header));
-    if (ntohl(header.magic) != ProtocolConstants::MAGIC) return false;
-    if (ntohl(header.version) != ProtocolConstants::VERSION) return false;
-    outCode = ntohl(header.code);
-    uint32_t bodyLen = ntohl(header.length);
-    if (bodyLen > 1024 * 1024) return false;  // 单报文上限 1MB
-    outBody.resize(bodyLen);
-    if (bodyLen > 0 && !recvExact(fd, &outBody[0], static_cast<int>(bodyLen))) return false;
-    return true;
-}
-}
-
 bool TcpServer::start() {
+    // 支持同进程 stop->start 重启：清空上次残留任务并解除 shutdown
+    TaskQueue::getInstance().reset();
+
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         LOG_ERROR("WSAStartup 失败");
@@ -79,6 +55,7 @@ bool TcpServer::start() {
     ctx_.promoFactory  = std::make_shared<PromotionFactory>(ctx_.promos);
     static std::mutex stockMutex;
     ctx_.stockMutex = &stockMutex;
+    ctx_.sessions   = &SessionManager::instance();
 
     workerPool_.setContext(ctx_);
     workerPool_.start();
@@ -102,11 +79,15 @@ void TcpServer::acceptLoop() {
 }
 
 void TcpServer::clientHandler(SOCKET clientFd) {
+    {
+        std::lock_guard<std::mutex> lock(clientsMtx_);
+        activeClients_.insert(clientFd);
+    }
     LOG_INFO("客户端连接接入");
     while (running_.load()) {
         uint32_t code = 0;
         std::string body;
-        if (!recvFullPacket(clientFd, code, body)) {
+        if (!NetUtil::recvFullPacket(clientFd, code, body)) {
             break;  // 客户端断开或错误
         }
         Task task;
@@ -117,6 +98,10 @@ void TcpServer::clientHandler(SOCKET clientFd) {
         TaskQueue::getInstance().push(task);  // 生产：入队并唤醒 Worker
     }
     closesocket(clientFd);
+    {
+        std::lock_guard<std::mutex> lock(clientsMtx_);
+        activeClients_.erase(clientFd);
+    }
     LOG_INFO("客户端连接断开");
 }
 
@@ -126,6 +111,12 @@ void TcpServer::stop() {
     if (listenFd_ != INVALID_SOCKET) {
         closesocket(listenFd_);
         listenFd_ = INVALID_SOCKET;
+    }
+    // 关闭所有活跃客户端连接：阻塞在 recv 的 clientHandler 线程立即返回并退出
+    {
+        std::lock_guard<std::mutex> lock(clientsMtx_);
+        for (SOCKET fd : activeClients_) closesocket(fd);
+        activeClients_.clear();
     }
     TaskQueue::getInstance().setShutdown(true);
     workerPool_.stop();

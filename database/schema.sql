@@ -10,7 +10,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
-    password TEXT NOT NULL,
+    password TEXT NOT NULL,               -- 密码 SHA-256 摘要：SHA256("微商系统$"||username||"#"||明文)
     real_name TEXT,
     phone TEXT,
     level INTEGER DEFAULT 1,          -- 1:普通 2:VIP
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    price REAL NOT NULL CHECK(price >= 0),
+    price INTEGER NOT NULL CHECK(price >= 0),  -- 单位：分（整数存储，避免浮点误差）
     stock INTEGER NOT NULL DEFAULT 0 CHECK(stock >= 0),
     description TEXT,
     category TEXT,
@@ -37,9 +37,9 @@ CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_no TEXT NOT NULL UNIQUE,    -- 业务订单号，如 "MS20260909001"
     user_id INTEGER NOT NULL,
-    total_amount REAL NOT NULL,       -- 原价合计
-    discount_amount REAL DEFAULT 0,   -- 优惠总金额
-    final_amount REAL NOT NULL,       -- 实付金额
+    total_amount INTEGER NOT NULL,     -- 原价合计（分）
+    discount_amount INTEGER DEFAULT 0, -- 优惠总金额（分）
+    final_amount INTEGER NOT NULL,    -- 实付金额（分）
     status INTEGER DEFAULT 0,         -- 0待支付 1已支付 2已发货 3已完成 4已取消 5退货中
     pay_time DATETIME,
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS order_items (
     order_id INTEGER NOT NULL,
     product_id INTEGER NOT NULL,
     product_name TEXT NOT NULL,       -- 购买时的商品名称（快照）
-    price REAL NOT NULL,              -- 购买时的单价（快照）
+    price INTEGER NOT NULL,            -- 购买时的单价（快照，分）
     quantity INTEGER NOT NULL CHECK(quantity > 0),
     FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
 );
@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS returns (
     user_id INTEGER NOT NULL,
     reason TEXT,
     status INTEGER DEFAULT 0,         -- 0待审核 1审核通过 2审核拒绝 3已完成
+    orig_status INTEGER DEFAULT 1,    -- 申请时订单原状态（审核拒绝时恢复）
     apply_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     audit_time DATETIME,
     FOREIGN KEY (order_id) REFERENCES orders(id)
@@ -73,9 +74,13 @@ CREATE TABLE IF NOT EXISTS returns (
 CREATE TABLE IF NOT EXISTS promotions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    type INTEGER NOT NULL,            -- 1:打折 2:降价 3:满减券
-    param1 REAL,                      -- 折扣率 / 降价金额 / 满额门槛
-    param2 REAL,                      -- (满减)优惠金额
+    type INTEGER NOT NULL,            -- 1:打折 2:降价 3:满减券 4:阶梯折扣
+    param1 REAL,                      -- 打折:折扣率 / 降价:降价金额 / 满减:满额门槛 / 阶梯:第1阶梯件数
+    param2 REAL,                      -- (满减)优惠金额 / 阶梯:第1阶梯折扣率
+    param3 REAL,                      -- 阶梯折扣:第2阶梯件数
+    param4 REAL,                      -- 阶梯折扣:第2阶梯折扣率
+    param5 REAL,                      -- 阶梯折扣:第3阶梯件数
+    param6 REAL,                      -- 阶梯折扣:第3阶梯折扣率（超出最高档按此档延续）
     start_time DATETIME,
     end_time DATETIME,
     status INTEGER DEFAULT 1

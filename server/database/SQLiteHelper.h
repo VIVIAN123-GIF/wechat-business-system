@@ -74,18 +74,22 @@ public:
     }
 
     sqlite3* getConnection() {
-        thread_local SQLiteHelper* helper = nullptr;
-        if (!helper) {
+        // RAII 持有每线程连接：线程退出时 thread_local 析构自动 close+delete，杜绝连接泄漏
+        struct ConnectionHolder {
+            SQLiteHelper* helper = nullptr;
+            ~ConnectionHolder() { if (helper) { delete helper; helper = nullptr; } }
+        };
+        thread_local ConnectionHolder holder;
+        if (!holder.helper) {
             try {
-                helper = new SQLiteHelper(dbFile_);
-                LOG_INFO("线程 " + std::to_string(reinterpret_cast<size_t>(helper)) +
-                         " 建立数据库连接");
+                holder.helper = new SQLiteHelper(dbFile_);
+                LOG_INFO("线程建立数据库连接");
             } catch (const std::exception& e) {
                 LOG_ERROR(std::string("数据库连接失败: ") + e.what());
                 return nullptr;
             }
         }
-        return helper->raw();
+        return holder.helper->raw();
     }
 
     bool isInitialized() const { return initialized_; }

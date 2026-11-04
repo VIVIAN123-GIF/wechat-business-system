@@ -158,7 +158,7 @@ bool ClientController::loginLoop() {
 void ClientController::mainLoop() {
     while (true) {
         renderer_->drawDivider();
-        renderer_->drawMainMenu();
+        renderer_->drawMainMenu(level_);
         int choice = getUserInputInt("", 0, 11);
         switch (choice) {
             case 1: handleShowProducts(); break;
@@ -189,73 +189,72 @@ void ClientController::run() {
 
 // ---------------- 功能 ----------------
 void ClientController::handleShowProducts() {
-    int respCode = 0; std::string respBody;
-    if (!sendAndRecv(ProtocolConstants::C_REQ_PRODUCT_LIST, "{}", respCode, respBody)) return;
+    while (true) {
+        // 1. 拉取并显示商品列表
+        int respCode = 0; std::string respBody;
+        if (!sendAndRecv(ProtocolConstants::C_REQ_PRODUCT_LIST, "{}", respCode, respBody)) return;
 
-    std::vector<ProductInfo> products;
-    try {
-        auto j = json::parse(respBody);
-        for (auto& item : j["products"]) {
-            ProductInfo p;
-            p.id    = item["id"];
-            p.name  = item["name"];
-            p.price = item.value("price", 0) / 100.0;  // 服务端发分，转元
-            p.stock = item["stock"];
-            p.category = item.value("category", "");
-            products.push_back(p);
-        }
-    } catch (...) {
-        renderer_->drawMessage("商品数据解析失败", true);
-        return;
-    }
-    renderer_->drawProductList(products);
-
-    // 商品详情入口（1002/2002）
-    std::cout << "\n查看商品详情？输入商品ID（0 跳过）: ";
-    int pid = getUserInputInt("", 0, 100000);
-    if (pid > 0) {
-        json detReq; detReq["product_id"] = pid;
-        int detCode = 0; std::string detBody;
-        if (sendAndRecv(ProtocolConstants::C_REQ_PRODUCT_DETAIL, detReq.dump(), detCode, detBody)) {
-            try {
-                auto dj = json::parse(detBody);
+        std::vector<ProductInfo> products;
+        try {
+            auto j = json::parse(respBody);
+            for (auto& item : j["products"]) {
                 ProductInfo p;
-                p.id = dj["id"]; p.name = dj["name"];
-                p.price = dj.value("price", 0) / 100.0;
-                p.stock = dj["stock"];
-                p.category = dj.value("category", "");
-                renderer_->drawProductDetail(p);
-            } catch (...) {
-                renderer_->drawMessage("商品详情解析失败", true);
+                p.id    = item["id"];
+                p.name  = item["name"];
+                p.price = item.value("price", 0) / 100.0;
+                p.stock = item["stock"];
+                p.category = item.value("category", "");
+                products.push_back(p);
             }
+        } catch (...) {
+            renderer_->drawMessage("商品数据解析失败", true);
+            return;
         }
-    }
+        renderer_->drawProductList(products);
 
-    std::cout << "\n加入购物车？输入商品ID（0 返回）: ";
-    pid = getUserInputInt("", 0, 100000);
-    if (pid == 0) return;
-    int qty = getUserInputInt("数量: ", 1, 9999);
+        // 2. 选择商品查看详情
+        int pid = getUserInputInt("\n输入商品ID查看详情（0 返回主菜单）: ", 0, 100000);
+        if (pid == 0) return;  // 返回主菜单
 
-    json req;
-    req["user_id"] = userId_;
-    req["product_id"] = pid;
-    req["quantity"] = qty;
-    if (sendAndRecv(ProtocolConstants::C_REQ_ADD_CART, req.dump(), respCode, respBody)) {
+        // 客户端校验：商品ID是否存在
+        const ProductInfo* sel = nullptr;
         for (const auto& p : products) {
-            if (p.id == pid) {
-                cart_.addItem(pid, p.name, p.price, qty);
-                renderer_->drawMessage("已加入购物车: " + p.name + " x" + std::to_string(qty));
-                return;
-            }
+            if (p.id == pid) { sel = &p; break; }
         }
-        renderer_->drawMessage("商品ID不存在", true);
+        if (!sel) {
+            renderer_->drawMessage("商品ID不存在，请重新选择", true);
+            continue;  // 回商品列表
+        }
+
+        // 3. 显示详情（列表数据已含全部字段，无需额外请求）
+        renderer_->drawProductDetail(*sel);
+
+        // 4. 加入购物车（默认当前商品，无需重新输入ID）
+        int qty = getUserInputInt("加入购物车数量（0=不加入，返回列表）: ", 0, 9999);
+        if (qty == 0) continue;  // 不加入，回商品列表
+
+        // 客户端预校验：库存充足
+        if (qty > sel->stock) {
+            renderer_->drawMessage("库存不足，当前库存: " + std::to_string(sel->stock), true);
+            continue;
+        }
+
+        json req;
+        req["user_id"] = userId_;
+        req["product_id"] = pid;
+        req["quantity"] = qty;
+        if (sendAndRecv(ProtocolConstants::C_REQ_ADD_CART, req.dump(), respCode, respBody)) {
+            cart_.addItem(pid, sel->name, sel->price, qty);
+            renderer_->drawMessage("已加入购物车: " + sel->name + " x" + std::to_string(qty));
+        }
+        // 回商品列表继续浏览
     }
 }
 
 void ClientController::handleCartManagement() {
     while (true) {
         renderer_->drawCart(cart_.getItems(), cart_.getTotalPrice());
-        std::cout << "\n购物车管理：\n1. 删除商品\n2. 修改数量\n3. 清空\n0. 返回\n";
+        std::cout << "\n购物车管理：\n1. 删除商品\n2. 修改数量\n3. 清空\n0. 返回主菜单\n";
         int choice = getUserInputInt("请选择: ", 0, 3);
         if (choice == 0) return;
         if (choice == 1) {
@@ -372,7 +371,7 @@ void ClientController::handleOrders() {
 
 void ClientController::handleReturn() {
     renderer_->drawMessage("请先查询订单确认订单ID");
-    int orderId = getUserInputInt("输入要退货的订单ID (0返回): ", 0, 1000000);
+    int orderId = getUserInputInt("输入要退货的订单ID (0返回主菜单): ", 0, 1000000);
     if (orderId == 0) return;
     std::cout << "退货原因: ";
     std::string reason;
@@ -396,15 +395,14 @@ void ClientController::handleMyReturns() {
     try {
         auto j = json::parse(respBody);
         std::cout << "\n====== 我的退货进度 ======\n";
-        std::cout << std::left << std::setw(8) << "退货ID"
-                  << std::setw(8) << "订单ID" << std::setw(10) << "状态"
-                  << std::setw(20) << "申请时间" << "原因\n";
+        std::cout << padR("退货ID", 8) << padR("订单ID", 8) << padR("状态", 10)
+                  << padR("申请时间", 20) << "原因\n";
         const char* st[] = {"待审核", "已通过", "已拒绝"};
         for (auto& r : j["returns"]) {
-            std::cout << std::left << std::setw(8) << r["return_id"].get<int>()
-                      << std::setw(8) << r["order_id"].get<int>()
-                      << std::setw(10) << st[r.value("status", 0)]
-                      << std::setw(20) << r.value("apply_time", "")
+            std::cout << padL(std::to_string(r["return_id"].get<int>()), 8)
+                      << padL(std::to_string(r["order_id"].get<int>()), 8)
+                      << padR(st[r.value("status", 0)], 10)
+                      << padR(r.value("apply_time", ""), 20)
                       << r.value("reason", "") << "\n";
         }
     } catch (...) {
@@ -419,20 +417,19 @@ void ClientController::handleAuditReturns() {
     try {
         auto j = json::parse(respBody);
         std::cout << "\n====== 退货审核（管理员）======\n";
-        std::cout << std::left << std::setw(8) << "退货ID"
-                  << std::setw(8) << "订单ID" << std::setw(8) << "用户"
-                  << std::setw(10) << "状态" << "原因\n";
+        std::cout << padR("退货ID", 8) << padR("订单ID", 8) << padR("用户", 8)
+                  << padR("状态", 10) << "原因\n";
         const char* st[] = {"待审核", "已通过", "已拒绝"};
         for (auto& r : j["returns"]) {
-            std::cout << std::left << std::setw(8) << r["return_id"].get<int>()
-                      << std::setw(8) << r["order_id"].get<int>()
-                      << std::setw(8) << r["user_id"].get<int>()
-                      << std::setw(10) << st[r.value("status", 0)]
+            std::cout << padL(std::to_string(r["return_id"].get<int>()), 8)
+                      << padL(std::to_string(r["order_id"].get<int>()), 8)
+                      << padL(std::to_string(r["user_id"].get<int>()), 8)
+                      << padR(st[r.value("status", 0)], 10)
                       << r.value("reason", "") << "\n";
         }
     } catch (...) { return; }
 
-    int returnId = getUserInputInt("\n审核退货ID（0 返回）: ", 0, 1000000);
+    int returnId = getUserInputInt("\n审核退货ID（0 返回主菜单）: ", 0, 1000000);
     if (returnId == 0) return;
     int approve = getUserInputInt("1=通过（回补库存） 2=拒绝: ", 1, 2);
     json req2;
@@ -462,25 +459,28 @@ void ClientController::handleStats() {
                   << " | 客单价: " << s.value("avg_order",0)/100.0
                   << " | 退货申请: " << s["return_count"].get<int>() << "\n";
 
-        std::cout << "\n[按日销售趋势]\n日期            订单数  销售额\n";
-        for (auto& d : j["daily"]) {
-            std::cout << std::left << std::setw(16) << d.value("date","")
-                      << std::setw(8) << d["order_count"].get<int>()
-                      << std::fixed << std::setprecision(2) << d.value("amount",0)/100.0 << "\n";
+        std::cout << "\n[按日销售趋势]\n" << padR("日期", 16) << padR("订单数", 8) << "销售额\n";
+        for (auto& d : j["by_day"]) {
+            std::cout << padR(d.value("date", ""), 16)
+                      << padL(std::to_string(d["orders"].get<int>()), 8)
+                      << fmtPrice(d.value("amount", 0) / 100.0) << "\n";
         }
-        std::cout << "\n[热销商品排行]\n商品ID  名称          销量  销售额\n";
-        for (auto& p : j["top_products"]) {
-            std::cout << std::left << std::setw(8) << p["product_id"].get<int>()
-                      << std::setw(14) << p.value("name","")
-                      << std::setw(6) << p["qty"].get<int>()
-                      << std::fixed << std::setprecision(2) << p.value("amount",0)/100.0 << "\n";
+        std::cout << "\n[热销商品排行]\n" << padR("商品ID", 8) << padR("名称", 14)
+                  << padR("销量", 6) << "销售额\n";
+        for (auto& p : j["by_product"]) {
+            std::cout << padL(std::to_string(p["product_id"].get<int>()), 8)
+                      << padR(p.value("name", ""), 14)
+                      << padL(std::to_string(p["quantity"].get<int>()), 6)
+                      << fmtPrice(p.value("amount", 0) / 100.0) << "\n";
         }
-        if (j.contains("top_users")) {
-            std::cout << "\n[用户贡献排行]\n用户ID  订单数  消费额\n";
-            for (auto& u : j["top_users"]) {
-                std::cout << std::left << std::setw(8) << u["user_id"].get<int>()
-                          << std::setw(8) << u["order_count"].get<int>()
-                          << std::fixed << std::setprecision(2) << u.value("amount",0)/100.0 << "\n";
+        if (j.contains("by_user")) {
+            std::cout << "\n[用户贡献排行]\n" << padR("用户ID", 8) << padR("用户名", 14)
+                      << padR("订单数", 8) << "消费额\n";
+            for (auto& u : j["by_user"]) {
+                std::cout << padL(std::to_string(u["user_id"].get<int>()), 8)
+                          << padR(u.value("username", ""), 14)
+                          << padL(std::to_string(u["orders"].get<int>()), 8)
+                          << fmtPrice(u.value("amount", 0) / 100.0) << "\n";
             }
         }
     } catch (...) {
@@ -526,12 +526,12 @@ void ClientController::handleServiceMsg() {
 
     json req;
     req["user_id"] = userId_;
-    req["message"] = msg;
+    req["content"] = msg;
     int respCode = 0; std::string respBody;
     if (sendAndRecv(ProtocolConstants::C_REQ_SERVICE_MSG, req.dump(), respCode, respBody)) {
         try {
             auto j = json::parse(respBody);
-            renderer_->drawMessage("客服已收到: " + j.value("echo", ""));
+            renderer_->drawMessage("客服已收到: " + j.value("received", ""));
             renderer_->drawMessage("自动应答: " + j.value("reply", "我们会尽快联系您"));
         } catch (...) {}
     }

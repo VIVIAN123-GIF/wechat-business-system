@@ -14,7 +14,7 @@ public:
     // 通用界面
     virtual void drawWelcome() = 0;
     virtual void drawLoginMenu() = 0;
-    virtual void drawMainMenu() = 0;
+    virtual void drawMainMenu(int level = 1) = 0;
     virtual void drawMessage(const std::string& msg, bool isError = false) = 0;
     virtual void drawDivider() = 0;
 

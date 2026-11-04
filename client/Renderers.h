@@ -73,11 +73,18 @@ public:
     void drawLoginMenu() override {
         std::cout << "\n1. 登录\n2. 注册\n0. 退出\n请选择: ";
     }
-    void drawMainMenu() override {
-        std::cout << "\n1. 查看商品\n2. 购物车\n3. 结算\n4. 我的订单\n"
-                     "5. 申请退货\n6. 切换UI皮肤\n7. 销售统计\n"
-                     "8. 搜索商品\n9. 联系客服\n"
-                     "10. 退货进度\n11. 退货审核(管理员)\n0. 退出\n请选择: ";
+    void drawMainMenu(int level = 1) override {
+        std::cout << "\n── 购物功能 ──────────────────────\n"
+                     "1. 查看商品   2. 购物车    3. 结算\n"
+                     "4. 我的订单   5. 申请退货  10.退货进度\n"
+                     "── 其他功能 ──────────────────────\n"
+                     "6. 切换皮肤   7. 销售统计  8. 搜索商品\n"
+                     "9. 联系客服\n";
+        if (level >= 2) {
+            std::cout << "── 管理员 ────────────────────────\n"
+                         "11.退货审核\n";
+        }
+        std::cout << "0. 退出系统\n请选择: ";
     }
     void drawMessage(const std::string& msg, bool isError) override {
         std::cout << (isError ? theme_.errorOf("[错误] " + msg)
@@ -119,7 +126,7 @@ public:
                       << padL(fmtPrice(it.getSubtotal()), 8) << " |\n";
         }
         std::cout << theme_.borderOf(sep) << "\n"
-                  << "| 合计" << std::string(22, ' ') << " | "
+                  << "| 合计" << std::string(28, ' ') << " | "
                   << padL(fmtPrice(total), 8) << " |\n"
                   << theme_.borderOf("+------+--------------------+------+----------+") << "\n";
     }
@@ -174,15 +181,27 @@ public:
             "|  1. 登录      2. 注册      0. 退出       |\n"
             "+------------------------------------------+") << "\n请选择: ";
     }
-    void drawMainMenu() override {
-        std::cout << theme_.borderOf(
+    void drawMainMenu(int level = 1) override {
+        std::string menu =
             "+------------------------------------------+\n"
-            "|  1. 查看商品    2. 购物车   3. 结算      |\n"
-            "|  4. 我的订单    5. 申请退货              |\n"
-            "|  6. 切换UI皮肤  7. 销售统计              |\n"
-            "|  8. 搜索商品    9. 联系客服              |\n"
-            "|  10.退货进度    11.退货审核  0. 退出     |\n"
-            "+------------------------------------------+") << "\n请选择: ";
+            "| 【购物】                                 |\n"
+            "|  1.查看商品   2.购物车    3.结算         |\n"
+            "|  4.我的订单   5.申请退货  10.退货进度    |\n"
+            "+------------------------------------------+\n"
+            "| 【其他】                                 |\n"
+            "|  6.切换皮肤   7.销售统计  8.搜索商品     |\n"
+            "|  9.联系客服                              |\n";
+        if (level >= 2) {
+            menu +=
+                "+------------------------------------------+\n"
+                "| 【管理员】                               |\n"
+                "|  11.退货审核                             |\n";
+        }
+        menu +=
+            "+------------------------------------------+\n"
+            "|  0.退出系统                              |\n"
+            "+------------------------------------------+";
+        std::cout << theme_.borderOf(menu) << "\n请选择: ";
     }
     void drawMessage(const std::string& msg, bool isError) override {
         std::cout << (isError ? theme_.errorOf("[错误] " + msg)
@@ -234,7 +253,7 @@ public:
                       << padL(fmtPrice(it.getSubtotal()), 8) << " |\n";
         }
         std::cout << theme_.borderOf(sep) << "\n"
-                  << "| 合计" << std::string(22, ' ') << " | "
+                  << "| 合计" << std::string(28, ' ') << " | "
                   << padL(fmtPrice(total), 8) << " |\n"
                   << theme_.borderOf(sep) << "\n";
     }
@@ -250,45 +269,40 @@ public:
             else if (p.type == 3) desc << "满" << static_cast<int>(p.param1)
                                       << "减" << static_cast<int>(p.param2);
             else if (p.type == 4) desc << "阶梯折扣";
-            std::cout << "| " << std::setw(4) << p.id << " | "
-                      << std::left << std::setw(18) << p.name << " | "
-                      << std::right << std::setw(10) << desc.str() << " |\n";
+            std::cout << "| " << padL(std::to_string(p.id), 4) << " | "
+                      << padR(p.name, 18) << " | "
+                      << padL(desc.str(), 10) << " |\n";
         }
         std::cout << theme_.borderOf("+------+--------------------+------------+") << "\n";
-        std::cout << std::right;
     }
     void drawOrderResult(const std::string& orderNo, double original,
                          double discount, double final) override {
         std::cout << theme_.borderOf("+------------------------------------------+") << "\n"
-                  << "| 订单号: " << std::left << std::setw(26) << orderNo << "|\n"
-                  << "| 原价: " << std::fixed << std::setprecision(2)
-                  << std::setw(8) << original << std::setw(17) << " |\n"
-                  << "| 优惠: " << std::setw(8) << discount << std::setw(17) << " |\n"
-                  << "| 实付: " << std::setw(8) << final << std::setw(17) << " |\n"
+                  << "| 订单号: " << padR(orderNo, 33) << "|\n"
+                  << "| 原价: " << padL(fmtPrice(original), 8) << std::string(27, ' ') << "|\n"
+                  << "| 优惠: " << padL(fmtPrice(discount), 8) << std::string(27, ' ') << "|\n"
+                  << "| 实付: " << padL(fmtPrice(final), 8) << std::string(27, ' ') << "|\n"
                   << theme_.borderOf("+------------------------------------------+") << "\n";
-        std::cout << std::right;
     }
     void drawOrderList(const std::vector<OrderInfo>& orders) override {
         if (orders.empty()) { std::cout << theme_.infoOf("[订单] 暂无订单") << "\n"; return; }
         for (const auto& o : orders) {
             std::cout << theme_.borderOf("+------+------------------------------+------------------+") << "\n"
-                      << "| 订单#" << std::left << std::setw(6) << o.orderId
-                      << " | " << std::setw(28) << o.orderNo
-                      << " | " << std::setw(14) << orderStatusName(o.status) << " |\n"
-                      << "| 实付: " << std::fixed << std::setprecision(2) << o.final
-                      << " | 优惠: " << o.discount
-                      << " | " << std::setw(24) << o.createTime << " |\n";
+                      << "| " << padL(std::to_string(o.orderId), 4)
+                      << " | " << padR(o.orderNo, 28)
+                      << " | " << padR(orderStatusName(o.status), 16) << " |\n"
+                      << "| 实付: " << padL(fmtPrice(o.final), 8)
+                      << "  优惠: " << padL(fmtPrice(o.discount), 8)
+                      << "  " << padR(o.createTime, 22) << " |\n";
             if (o.returnStatus > 0) {
-                std::cout << "| " << std::left << std::setw(58)
-                          << returnStatusName(o.returnStatus) << " |\n";
+                std::cout << "| " << padR(returnStatusName(o.returnStatus), 54) << " |\n";
             }
             std::cout << theme_.borderOf("+------+------------------------------+------------------+") << "\n";
             for (const auto& it : o.items) {
                 std::cout << "  - " << it.productName << " x" << it.quantity
-                          << " @" << std::fixed << std::setprecision(2) << it.price << "\n";
+                          << " @" << fmtPrice(it.price) << "\n";
             }
         }
-        std::cout << std::right;
     }
     std::string getStyleName() const override { return "详细风格"; }
     std::string getThemeName() const override { return theme_.name; }

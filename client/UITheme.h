@@ -29,12 +29,12 @@ struct UITheme {
 
 // 三套内置配色（抽象工厂的产品族共享同一配色）
 inline const UITheme& themeBlue() {
-    static UITheme t = {"蓝色", "\033[1;94m", "\033[96m", "\033[34m",
+    static UITheme t = {"蓝色", "\033[1;94m", "\033[94m", "\033[34m",
                         "\033[91m", "\033[94m", "\033[0m"};
     return t;
 }
 inline const UITheme& themeGreen() {
-    static UITheme t = {"绿色", "\033[1;92m", "\033[96m", "\033[32m",
+    static UITheme t = {"绿色", "\033[1;92m", "\033[92m", "\033[32m",
                         "\033[91m", "\033[92m", "\033[0m"};
     return t;
 }

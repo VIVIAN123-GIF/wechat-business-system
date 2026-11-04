@@ -10,7 +10,7 @@
 #include <thread>
 #include <atomic>
 #include <memory>
-#include <set>
+#include <map>
 #include <mutex>
 #include "TaskQueue.h"
 #include "WorkerPool.h"
@@ -26,7 +26,7 @@ public:
 
 private:
     void acceptLoop();
-    void clientHandler(SOCKET clientFd);
+    void clientHandler(std::shared_ptr<ConnectionState> connection);
 
     int port_;
     SOCKET listenFd_ = INVALID_SOCKET;
@@ -35,6 +35,6 @@ private:
     WorkerPool workerPool_{4};
     HandlerContext ctx_;
     // 活跃客户端连接集合：stop() 时统一关闭，唤醒阻塞在 recv 的线程使其退出
-    std::set<SOCKET> activeClients_;
+    std::map<SOCKET, std::shared_ptr<ConnectionState>> activeClients_;
     std::mutex clientsMtx_;
 };

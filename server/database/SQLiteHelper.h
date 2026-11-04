@@ -22,6 +22,7 @@ public:
             throw std::runtime_error(msg);
         }
         execute("PRAGMA foreign_keys = ON;");
+        execute("PRAGMA busy_timeout = 5000;");
     }
     ~SQLiteHelper() { if (db_) sqlite3_close(db_); }
 

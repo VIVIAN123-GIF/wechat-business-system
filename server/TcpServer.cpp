@@ -74,14 +74,17 @@ void TcpServer::acceptLoop() {
             continue;
         }
         // 每客户端一个收发线程（业务处理由 WorkerPool 完成）
-        std::thread(&TcpServer::clientHandler, this, clientFd).detach();
+        auto connection = std::make_shared<ConnectionState>();
+        connection->clientFd = clientFd;
+        std::thread(&TcpServer::clientHandler, this, connection).detach();
     }
 }
 
-void TcpServer::clientHandler(SOCKET clientFd) {
+void TcpServer::clientHandler(std::shared_ptr<ConnectionState> connection) {
+    SOCKET clientFd = connection->clientFd;
     {
         std::lock_guard<std::mutex> lock(clientsMtx_);
-        activeClients_.insert(clientFd);
+        activeClients_[clientFd] = connection;
     }
     LOG_INFO("客户端连接接入");
     while (running_.load()) {
@@ -92,12 +95,20 @@ void TcpServer::clientHandler(SOCKET clientFd) {
         }
         Task task;
         task.clientFd = clientFd;
+        task.connection = connection;
         task.protocolCode = code;
         task.jsonBody = body;
         task.timestamp = 0;
         TaskQueue::getInstance().push(task);  // 生产：入队并唤醒 Worker
     }
-    closesocket(clientFd);
+    connection->active.store(false);
+    {
+        std::lock_guard<std::mutex> sendLock(connection->sendMutex);
+        if (!connection->closed.exchange(true)) {
+            shutdown(clientFd, SD_BOTH);
+            closesocket(clientFd);
+        }
+    }
     {
         std::lock_guard<std::mutex> lock(clientsMtx_);
         activeClients_.erase(clientFd);
@@ -115,7 +126,15 @@ void TcpServer::stop() {
     // 关闭所有活跃客户端连接：阻塞在 recv 的 clientHandler 线程立即返回并退出
     {
         std::lock_guard<std::mutex> lock(clientsMtx_);
-        for (SOCKET fd : activeClients_) closesocket(fd);
+        for (const auto& entry : activeClients_) {
+            const auto& connection = entry.second;
+            connection->active.store(false);
+            std::lock_guard<std::mutex> sendLock(connection->sendMutex);
+            if (!connection->closed.exchange(true)) {
+                shutdown(entry.first, SD_BOTH);
+                closesocket(entry.first);
+            }
+        }
         activeClients_.clear();
     }
     TaskQueue::getInstance().setShutdown(true);

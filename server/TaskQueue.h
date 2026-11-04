@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include <memory>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -16,8 +17,16 @@
 #include <sys/socket.h>
 #endif
 
+struct ConnectionState {
+    SOCKET clientFd = INVALID_SOCKET;
+    std::atomic<bool> active{true};
+    std::atomic<bool> closed{false};
+    std::mutex sendMutex;
+};
+
 struct Task {
     SOCKET clientFd = INVALID_SOCKET;
+    std::shared_ptr<ConnectionState> connection;
     uint32_t protocolCode = 0;
     std::string jsonBody;
     long long timestamp = 0;

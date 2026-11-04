@@ -11,6 +11,34 @@
 #include "UIRenderer.h"
 #include "UITheme.h"
 
+// ---------- 中文显示宽度与对齐辅助 ----------
+// UTF-8 中文字符显示占 2 列，std::setw 按字节计数会导致中文对不齐
+inline int displayWidth(const std::string& s) {
+    int w = 0;
+    for (size_t i = 0; i < s.size(); ) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        if (c < 0x80)      { w += 1; i += 1; }
+        else if (c < 0xC0) { w += 1; i += 1; }
+        else if (c < 0xE0) { w += 1; i += 2; }
+        else if (c < 0xF0) { w += 2; i += 3; }
+        else                { w += 2; i += 4; }
+    }
+    return w;
+}
+inline std::string padR(const std::string& s, int width) {
+    int dw = displayWidth(s);
+    return (dw >= width) ? s : s + std::string(width - dw, ' ');
+}
+inline std::string padL(const std::string& s, int width) {
+    int dw = displayWidth(s);
+    return (dw >= width) ? s : std::string(width - dw, ' ') + s;
+}
+inline std::string fmtPrice(double v) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2) << v;
+    return oss.str();
+}
+
 // 订单状态码 -> 中文（0待支付 1已支付 2已发货 3已完成 4已取消 5退货中）
 inline std::string orderStatusName(int status) {
     switch (status) {
@@ -57,12 +85,19 @@ public:
     }
     void drawDivider() override { std::cout << theme_.borderOf("--------------------------------") << "\n"; }
     void drawProductList(const std::vector<ProductInfo>& products) override {
-        std::cout << theme_.accentOf("ID\t名称\t价格\t库存\t分类") << "\n";
+        const char* sep = "+------+--------------------+-----------+------+----------+";
+        std::cout << theme_.borderOf(sep) << "\n"
+                  << theme_.accentOf(
+                      "|  ID  | 名称               | 价格      | 库存 | 分类     |") << "\n"
+                  << theme_.borderOf(sep) << "\n";
         for (const auto& p : products) {
-            std::cout << p.id << "\t" << p.name << "\t" << std::fixed
-                      << std::setprecision(2) << p.price << "\t" << p.stock
-                      << "\t" << p.category << "\n";
+            std::cout << "| " << padL(std::to_string(p.id), 4) << " | "
+                      << padR(p.name, 18) << " | "
+                      << padL(fmtPrice(p.price), 9) << " | "
+                      << padL(std::to_string(p.stock), 4) << " | "
+                      << padR(p.category, 8) << " |\n";
         }
+        std::cout << theme_.borderOf(sep) << "\n";
     }
     void drawProductDetail(const ProductInfo& p) override {
         std::cout << "商品ID: " << p.id << " | 名称: " << p.name
@@ -149,34 +184,32 @@ public:
         std::cout << theme_.borderOf("+------------------------------------------+") << "\n";
     }
     void drawProductList(const std::vector<ProductInfo>& products) override {
+        const char* sep = "+------+--------------------+-----------+------+----------+";
         std::cout << theme_.accentOf(
-            "+------+--------------------+---------+------+----------+\n"
-            "|  ID  | 名称               | 价格    | 库存 | 分类     |\n"
-            "+------+--------------------+---------+------+----------+") << "\n";
+            "+------+--------------------+-----------+------+----------+\n"
+            "|  ID  | 名称               | 价格      | 库存 | 分类     |\n"
+            "+------+--------------------+-----------+------+----------+") << "\n";
         for (const auto& p : products) {
-            std::cout << "| " << std::right << std::setw(4) << p.id << " | "
-                      << std::left << std::setw(18) << p.name << " | "
-                      << std::right << std::fixed << std::setprecision(2)
-                      << std::setw(7) << p.price << " | "
-                      << std::setw(4) << p.stock << " | "
-                      << std::left << std::setw(8) << p.category << " |\n";
+            std::cout << "| " << padL(std::to_string(p.id), 4) << " | "
+                      << padR(p.name, 18) << " | "
+                      << padL(fmtPrice(p.price), 9) << " | "
+                      << padL(std::to_string(p.stock), 4) << " | "
+                      << padR(p.category, 8) << " |\n";
         }
-        std::cout << theme_.borderOf("+------+--------------------+---------+------+----------+") << "\n";
-        std::cout << std::right;
+        std::cout << theme_.borderOf(sep) << "\n";
     }
     void drawProductDetail(const ProductInfo& p) override {
+        const char* sep = "+------+--------------------+-----------+------+----------+";
         std::cout << theme_.accentOf(
-            "+------+--------------------+---------+------+----------+\n"
-            "|  ID  | 名称               | 价格    | 库存 | 分类     |\n"
-            "+------+--------------------+---------+------+----------+") << "\n"
-                  << "| " << std::right << std::setw(4) << p.id << " | "
-                  << std::left << std::setw(18) << p.name << " | "
-                  << std::right << std::fixed << std::setprecision(2)
-                  << std::setw(7) << p.price << " | "
-                  << std::setw(4) << p.stock << " | "
-                  << std::left << std::setw(8) << p.category << " |\n"
-                  << theme_.borderOf("+------+--------------------+---------+------+----------+") << "\n";
-        std::cout << std::right;
+            "+------+--------------------+-----------+------+----------+\n"
+            "|  ID  | 名称               | 价格      | 库存 | 分类     |\n"
+            "+------+--------------------+-----------+------+----------+") << "\n"
+                  << "| " << padL(std::to_string(p.id), 4) << " | "
+                  << padR(p.name, 18) << " | "
+                  << padL(fmtPrice(p.price), 9) << " | "
+                  << padL(std::to_string(p.stock), 4) << " | "
+                  << padR(p.category, 8) << " |\n"
+                  << theme_.borderOf(sep) << "\n";
     }
     void drawCart(const std::map<int, CartItem>& items, double total) override {
         if (items.empty()) { std::cout << theme_.infoOf("[购物车] 为空") << "\n"; return; }

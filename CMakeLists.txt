@@ -6,7 +6,7 @@
 # 或直接沿用 build.bat（g++ 命令行）
 # ============================================================
 cmake_minimum_required(VERSION 3.15)
-project(wechat_mall CXX)
+project(wechat_mall LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -56,6 +56,9 @@ target_include_directories(client PRIVATE ${CMAKE_SOURCE_DIR}/client)
 # ---------- 集成测试（走真实 socket，需先启动 server） ----------
 add_executable(test_integration test/test_client.cpp)
 target_link_libraries(test_integration PRIVATE common)
+if(WIN32)
+    target_link_libraries(test_integration PRIVATE ws2_32)
+endif()
 
 # ---------- 单元测试（纯逻辑，无需启动 server） ----------
 add_executable(unit_tests
@@ -68,3 +71,11 @@ target_include_directories(unit_tests PRIVATE
 
 enable_testing()
 add_test(NAME unit_tests COMMAND unit_tests)
+if(WIN32)
+    add_test(NAME integration_tests
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File ${CMAKE_SOURCE_DIR}/test/run_integration.ps1
+        -ServerExe $<TARGET_FILE:server>
+        -TestExe $<TARGET_FILE:test_integration>
+        -ProjectRoot ${CMAKE_SOURCE_DIR})
+endif()

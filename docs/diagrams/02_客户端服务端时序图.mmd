@@ -1,0 +1,52 @@
+%% 客户端/服务端时序图 - 以结算(1030)完整链路为例
+%% 依据实际实现：接入线程入队 → Worker 出队 → HandlerFactory → CheckoutHandler → 事务+原子扣减+促销链
+sequenceDiagram
+    autonumber
+    participant U as 用户
+    participant CC as ClientController
+    participant TC as TcpClient
+    participant CH as clientHandler(接入线程)
+    participant TQ as TaskQueue
+    participant W as Worker线程
+    participant HF as HandlerFactory
+    participant H as CheckoutHandler
+    participant SM as SessionManager
+    participant PR as ProductRepository
+    participant PF as PromotionFactory
+    participant OR as OrderRepository
+    participant DB as SQLite
+
+    U->>CC: 选择结算
+    CC->>TC: sendRequest(1030, {user_id,token,items,promo_ids})
+    TC->>CH: TCP 报文（16字节头 + JSON体）
+    CH->>CH: NetUtil::recvFullPacket 解包
+    CH->>TQ: push Task{code=1030, body}
+    TQ-->>W: pop 唤醒（条件变量 notify_one）
+    W->>HF: create(1030, ctx)
+    HF-->>W: CheckoutHandler 实例
+    W->>H: execute(req, resp)
+    H->>SM: requireUser(token, user_id)
+    SM-->>H: 鉴权通过
+    H->>DB: BEGIN IMMEDIATE TRANSACTION
+    H->>H: lock_guard(stockMutex) 内存级互斥锁
+    loop 遍历每个商品明细
+        H->>PR: findById(product_id)
+        PR-->>H: Product
+        H->>PR: deductStock(id, qty)<br/>UPDATE stock=stock-qty WHERE stock>=qty
+        PR-->>H: 成功 / 库存不足
+        H->>H: 记录商品快照(name,price) 累加 totalAmount
+    end
+    H->>PF: PromoChainBuilder.build(promo_ids)
+    PF-->>H: 促销链（策略+装饰）
+    H->>H: VIP(level>=2) 包裹 ExtraDiscountDecorator(0.95)
+    H->>H: chain.applyToItems(total, items) → finalAmount
+    H->>OR: insert(order)<br/>order_no UNIQUE 冲突重试≤3次
+    OR-->>H: 成功
+    H->>DB: COMMIT
+    H->>H: OrderEventBus.notifyOrderCreated 观察者广播
+    H-->>W: resp={order_id,order_no,original,discount,final,promo_desc}
+    W->>CH: send(2030, resp)
+    CH-->>TC: TCP 响应报文
+    TC-->>CC: receiveResponse → code=2030
+    CC-->>U: 渲染结算结果
+    Note over H,DB: 任一步失败 → ROLLBACK → 返回 4001（业务错误码）

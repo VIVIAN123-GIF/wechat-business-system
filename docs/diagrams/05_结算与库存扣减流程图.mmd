@@ -1,0 +1,32 @@
+%% 结算与库存扣减流程图 - 依据 CheckoutHandler::execute 实际流程
+%% 三重防超卖：内存互斥锁 + SQL原子扣减 + 事务回滚
+flowchart TD
+    A(["接收 1030 结算请求"]) --> B["Auth.requireUser<br/>校验 token 与 user_id 一致性"]
+    B -->|"鉴权失败"| Z1["返回 4002 未登录"]
+    B -->|"通过"| C["查询用户 / promo_ids 去重"]
+    C --> D{"促销是否存在<br/>且 status=1 未过期?"}
+    D -->|"否"| Z2["返回 4001 err=1007<br/>促销不存在或已过期"]
+    D -->|"是"| E["BEGIN IMMEDIATE TRANSACTION"]
+    E --> F["lock_guard(stockMutex)<br/>内存级互斥锁"]
+    F --> G["遍历 items 逐件处理"]
+    G --> H["ProductRepository.findById"]
+    H --> I{"商品存在?"}
+    I -->|"否"| ROLL["ROLLBACK 回滚事务"]
+    I -->|"是"| J["deductStock 原子扣减<br/>UPDATE stock=stock-qty<br/>WHERE id=? AND stock>=qty"]
+    J --> K{"扣减成功?"}
+    K -->|"否 库存不足"| ROLL
+    K -->|"是"| L["记录商品快照 name/price<br/>累加 totalAmount"]
+    L --> M{"还有下一件?"}
+    M -->|"是"| G
+    M -->|"否"| N["PromoChainBuilder.build<br/>构建促销链(策略+装饰)"]
+    N --> O{"用户 level>=2 VIP?"}
+    O -->|"是"| P["包裹 ExtraDiscountDecorator(0.95)"]
+    O -->|"否"| Q["chain.applyToItems<br/>计算 finalAmount"]
+    P --> Q
+    Q --> R["OrderRepository.insert<br/>order_no UNIQUE 冲突重试≤3次"]
+    R --> S{"插入成功?"}
+    S -->|"否"| ROLL
+    S -->|"是"| T["COMMIT 提交事务"]
+    T --> U["OrderEventBus.notifyOrderCreated<br/>观察者广播订单创建事件"]
+    U --> V(["返回 2030<br/>order_id/order_no/original/<br/>discount/final/promo_desc"])
+    ROLL --> Z3["返回 4001<br/>库存不足/商品不存在/系统繁忙"]

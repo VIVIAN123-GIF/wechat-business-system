@@ -1,0 +1,71 @@
+%% 系统总体架构图 - 微商系统 C/S 架构
+%% 依据实际 C++ 实现：客户端 MVC + 服务端三层架构 + 生产者消费者消息队列
+flowchart TB
+    subgraph Client["客户端进程（MVC）"]
+        direction TB
+        CC["ClientController<br/>Controller 主循环"]
+        TC["TcpClient<br/>RAII Socket 封装"]
+        LC["LocalCart<br/>本地购物车"]
+        subgraph ViewLayer["视图层（策略 + 抽象工厂）"]
+            UR["UIRenderer<br/>渲染策略接口"]
+            UF["UIFactory<br/>皮肤抽象工厂"]
+            Blue["BlueThemeFactory"]
+            Green["GreenThemeFactory"]
+            Pink["PinkThemeFactory"]
+        end
+        CC --> TC
+        CC --> LC
+        CC --> UF
+        UF --> UR
+        Blue -.->|实现| UF
+        Green -.->|实现| UF
+        Pink -.->|实现| UF
+    end
+
+    subgraph Net["网络层（自定义 TCP 应用层协议）"]
+        direction LR
+        HDR["16 字节定长头<br/>Magic+Version+Code+Length"]
+        BODY["JSON 变长体（UTF-8）"]
+        NU["NetUtil::recvFullPacket<br/>长度前缀法防粘包"]
+    end
+
+    subgraph Server["服务端进程（三层架构）"]
+        direction TB
+        subgraph Access["接入层"]
+            TS["TcpServer<br/>Acceptor 线程"]
+            CH["clientHandler<br/>每客户端收发线程"]
+        end
+        TQ["TaskQueue 单例<br/>生产者-消费者消息队列"]
+        WP["WorkerPool<br/>4 Worker 线程"]
+        HF["HandlerFactory<br/>按协议码创建 Handler"]
+        subgraph Biz["业务层（命令模式 ICommandHandler）"]
+            H1["ShowProductHandler"]
+            H2["LoginHandler"]
+            H3["CheckoutHandler"]
+            H4["ReturnHandler"]
+            H5["SalesStatsHandler"]
+            Hx["…共 15 个 Handler"]
+        end
+        subgraph Repo["持久层（Repository）"]
+            R1["ProductRepository"]
+            R2["OrderRepository"]
+            R3["UserRepository"]
+            R4["ReturnRepository"]
+            R5["PromotionRepository"]
+        end
+        DB[("SQLite ms.db<br/>每线程独立连接")]
+        SM["SessionManager 单例<br/>token 鉴权"]
+        EB["OrderEventBus<br/>观察者事件总线"]
+    end
+
+    TC <-->|"ProtocolEncoder 编码 / recvFullPacket 解包"| Net
+    Net <--> CH
+    TS --> CH
+    CH -->|"push Task"| TQ
+    TQ -->|"pop 阻塞等待（条件变量）"| WP
+    WP --> HF
+    HF --> Biz
+    Biz --> Repo
+    Repo --> DB
+    Biz --> SM
+    H3 --> EB

@@ -1,0 +1,69 @@
+%% 数据库 ER 图 - 依据 database/schema.sql 实际表结构
+%% 注意：order_items.product_id 为逻辑引用，schema 中未建 FK 约束
+erDiagram
+    users {
+        int id PK
+        string username UK
+        string password "SHA-256加盐摘要"
+        string real_name
+        string phone
+        int level "1普通 2VIP"
+        datetime register_date
+        datetime last_login
+    }
+    products {
+        int id PK
+        string name
+        int price "单位:分"
+        int stock
+        string description
+        string category
+        string image_url
+        int status "0下架 1上架"
+    }
+    orders {
+        int id PK
+        string order_no UK
+        int user_id FK
+        int total_amount "分"
+        int discount_amount "分"
+        int final_amount "分"
+        int status "0待付1已付2已发3完成4取消5退货中"
+        datetime pay_time
+        datetime create_time
+    }
+    order_items {
+        int id PK
+        int order_id FK
+        int product_id "逻辑引用products.id,无FK约束"
+        string product_name "购买时快照"
+        int price "购买时单价快照,分"
+        int quantity
+    }
+    returns {
+        int id PK
+        int order_id FK
+        int user_id
+        string reason
+        int status "0待审1通过2拒绝3完成"
+        int orig_status "申请时订单原状态,拒绝时恢复"
+        datetime apply_time
+        datetime audit_time
+    }
+    promotions {
+        int id PK
+        string name
+        int type "1打折2直降3满减4阶梯折扣"
+        double param1
+        double param2
+        double param3
+        double param4
+        double param5
+        double param6
+        int status
+    }
+
+    users ||--o{ orders : "下单"
+    orders ||--o{ order_items : "包含明细"
+    orders ||--o{ returns : "申请退货"
+    products ||--o{ order_items : "被购买(逻辑引用)"

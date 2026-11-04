@@ -1,0 +1,80 @@
+%% 促销策略类图 - 策略模式 + 装饰模式 + 工厂模式
+%% 依据 server/promotion/promotions.h 实际类结构
+classDiagram
+    class IPromotion {
+        <<interface>>
+        +int apply(int cents)
+        +int applyToItems(int cents, vector~OrderItem~ items)
+        +int getDiscountAmount(int cents)
+        +string getDescription()
+        +int getId()
+    }
+    class DiscountPromotion {
+        -int id_
+        -double rate_
+        +apply(int) int
+        +getDiscountAmount(int) int
+    }
+    class PriceCutPromotion {
+        -int id_
+        -int cutCents_
+        +apply(int) int
+        +getDiscountAmount(int) int
+    }
+    class CouponPromotion {
+        -int id_
+        -int thresholdCents_
+        -int reduceCents_
+        +apply(int) int
+        +getDiscountAmount(int) int
+    }
+    class TierDiscountPromotion {
+        -int id_
+        -vector~Tier~ rules_
+        +applyToItems(int, vector~OrderItem~) int
+        -tieredPrice(int unit, int qty) int
+    }
+    class PromotionDecorator {
+        <<abstract>>
+        #unique_ptr~IPromotion~ wrapped_
+        +apply(int) int
+        +applyToItems(int, vector~OrderItem~) int
+        +getDiscountAmount(int) int
+    }
+    class ExtraDiscountDecorator {
+        -double extraRate_
+        +apply(int) int
+        +applyToItems(int, vector~OrderItem~) int
+    }
+    class CompositeDecorator {
+        -unique_ptr~IPromotion~ extra_
+        +apply(int) int
+        +applyToItems(int, vector~OrderItem~) int
+    }
+    class PromotionFactory {
+        -shared_ptr~PromotionRepository~ repo_
+        +create(int promoId) unique_ptr~IPromotion~
+        +createFromRecord(Promotion) unique_ptr~IPromotion~
+        -createTierDiscount(Promotion) unique_ptr~IPromotion~
+    }
+    class PromoChainBuilder {
+        +build(vector~int~ ids, PromotionFactory&) unique_ptr~IPromotion~$
+    }
+    class Money {
+        +toCents(double yuan) int$
+    }
+
+    IPromotion <|.. DiscountPromotion
+    IPromotion <|.. PriceCutPromotion
+    IPromotion <|.. CouponPromotion
+    IPromotion <|.. TierDiscountPromotion
+    IPromotion <|.. PromotionDecorator
+    PromotionDecorator <|-- ExtraDiscountDecorator
+    PromotionDecorator <|-- CompositeDecorator
+    PromotionDecorator o-- IPromotion : wrapped_
+    CompositeDecorator o-- IPromotion : extra_
+    PromotionFactory ..> IPromotion : 创建
+    PromotionFactory --> PromotionRepository : 依赖
+    PromoChainBuilder ..> PromotionFactory : 使用
+    TierDiscountPromotion --> OrderItem : 明细感知
+    Money ..> IPromotion : 金额分转换

@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>微商系统 - UML 与结构图</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --border:#e5e7eb; --text:#1f2937;
+    --muted:#6b7280; --accent:#2563eb; --code:#f3f4f6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;line-height:1.7}
+  header{background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;padding:36px 48px}
+  header h1{margin:0 0 6px;font-size:26px}
+  header p{margin:0;opacity:.88;font-size:14px}
+  .container{max-width:1100px;margin:0 auto;padding:28px 24px 60px}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:10px;
+       padding:18px 24px;margin-bottom:28px}
+  .toc h2{margin:0 0 10px;font-size:16px;color:var(--accent)}
+  .toc ol{margin:0;padding-left:22px}
+  .toc a{color:var(--text);text-decoration:none}
+  .toc a:hover{color:var(--accent);text-decoration:underline}
+  .diagram{background:var(--card);border:1px solid var(--border);border-radius:10px;
+           padding:24px 28px;margin-bottom:28px;page-break-inside:avoid}
+  .diagram h2{margin:0 0 4px;font-size:19px;color:#111827;border-left:4px solid var(--accent);padding-left:12px}
+  .diagram .caption{color:var(--muted);font-size:13px;margin:0 0 18px;padding-left:16px}
+  .mermaid{display:flex;justify-content:center;overflow-x:auto}
+  .mermaid svg{max-width:100%;height:auto}
+  .note{background:#fffbeb;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:4px;
+        font-size:13px;color:#92400e;margin-top:14px}
+  footer{text-align:center;color:var(--muted);font-size:12px;padding:20px}
+  @media print{
+    header{background:#1e3a8a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .diagram{box-shadow:none}
+    .toc{display:none}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>微商系统 · UML 与结构图</h1>
+  <p>面向对象课程设计 — 基于实际 C++ 实现绘制（C/S 架构 / 策略+装饰+工厂 / SQLite）</p>
+</header>
+
+<div class="container">
+  <div class="toc">
+    <h2>目录</h2>
+    <ol>
+      <li><a href="#d1">系统总体架构图</a></li>
+      <li><a href="#d2">客户端 / 服务端时序图（结算 1030 完整链路）</a></li>
+      <li><a href="#d3">促销策略类图（策略 + 装饰 + 工厂）</a></li>
+      <li><a href="#d4">数据库 ER 图</a></li>
+      <li><a href="#d5">结算与库存扣减流程图（三重防超卖）</a></li>
+    </ol>
+  </div>
+
+  <!-- 1. 系统总体架构图 -->
+  <section class="diagram" id="d1">
+    <h2>1. 系统总体架构图</h2>
+    <p class="caption">客户端 MVC（Controller + TcpClient + LocalCart + UI 策略/抽象工厂）↔ 自定义 TCP 协议 ↔ 服务端三层架构（接入层 / 业务层命令模式 / 持久层 Repository），中间由 TaskQueue 单例消息队列解耦，WorkerPool 线程池消费。</p>
+    <div class="mermaid">
+flowchart TB
+    subgraph Client["客户端进程（MVC）"]
+        direction TB
+        CC["ClientController<br/>Controller 主循环"]
+        TC["TcpClient<br/>RAII Socket 封装"]
+        LC["LocalCart<br/>本地购物车"]
+        subgraph ViewLayer["视图层（策略 + 抽象工厂）"]
+            UR["UIRenderer<br/>渲染策略接口"]
+            UF["UIFactory<br/>皮肤抽象工厂"]
+            Blue["BlueThemeFactory"]
+            Green["GreenThemeFactory"]
+            Pink["PinkThemeFactory"]
+        end
+        CC --> TC
+        CC --> LC
+        CC --> UF
+        UF --> UR
+        Blue -.->|实现| UF
+        Green -.->|实现| UF
+        Pink -.->|实现| UF
+    end
+
+    subgraph Net["网络层（自定义 TCP 应用层协议）"]
+        direction LR
+        HDR["16 字节定长头<br/>Magic+Version+Code+Length"]
+        BODY["JSON 变长体（UTF-8）"]
+        NU["NetUtil::recvFullPacket<br/>长度前缀法防粘包"]
+    end
+
+    subgraph Server["服务端进程（三层架构）"]
+        direction TB
+        subgraph Access["接入层"]
+            TS["TcpServer<br/>Acceptor 线程"]
+            CH["clientHandler<br/>每客户端收发线程"]
+        end
+        TQ["TaskQueue 单例<br/>生产者-消费者消息队列"]
+        WP["WorkerPool<br/>4 Worker 线程"]
+        HF["HandlerFactory<br/>按协议码创建 Handler"]
+        subgraph Biz["业务层（命令模式 ICommandHandler）"]
+            H1["ShowProductHandler"]
+            H2["LoginHandler"]
+            H3["CheckoutHandler"]
+            H4["ReturnHandler"]
+            H5["SalesStatsHandler"]
+            Hx["…共 15 个 Handler"]
+        end
+        subgraph Repo["持久层（Repository）"]
+            R1["ProductRepository"]
+            R2["OrderRepository"]
+            R3["UserRepository"]
+            R4["ReturnRepository"]
+            R5["PromotionRepository"]
+        end
+        DB[("SQLite ms.db<br/>每线程独立连接")]
+        SM["SessionManager 单例<br/>token 鉴权"]
+        EB["OrderEventBus<br/>观察者事件总线"]
+    end
+
+    TC <-->|"ProtocolEncoder 编码 / recvFullPacket 解包"| Net
+    Net <--> CH
+    TS --> CH
+    CH -->|"push Task"| TQ
+    TQ -->|"pop 阻塞等待（条件变量）"| WP
+    WP --> HF
+    HF --> Biz
+    Biz --> Repo
+    Repo --> DB
+    Biz --> SM
+    H3 --> EB
+    </div>
+  </section>
+
+  <!-- 2. 时序图 -->
+  <section class="diagram" id="d2">
+    <h2>2. 客户端 / 服务端时序图</h2>
+    <p class="caption">以结算（协议码 1030）为例的完整请求-响应链路：接入线程只负责收包入队，Worker 线程出队后经 HandlerFactory 分发到 CheckoutHandler，内部完成鉴权 → 事务 → 原子扣减 → 促销链 → 落库 → 提交 → 观察者广播。</p>
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as 用户
+    participant CC as ClientController
+    participant TC as TcpClient
+    participant CH as clientHandler(接入线程)
+    participant TQ as TaskQueue
+    participant W as Worker线程
+    participant HF as HandlerFactory
+    participant H as CheckoutHandler
+    participant SM as SessionManager
+    participant PR as ProductRepository
+    participant PF as PromotionFactory
+    participant OR as OrderRepository
+    participant DB as SQLite
+
+    U->>CC: 选择结算
+    CC->>TC: sendRequest(1030, {user_id,token,items,promo_ids})
+    TC->>CH: TCP 报文（16字节头 + JSON体）
+    CH->>CH: NetUtil::recvFullPacket 解包
+    CH->>TQ: push Task{code=1030, body}
+    TQ-->>W: pop 唤醒（条件变量 notify_one）
+    W->>HF: create(1030, ctx)
+    HF-->>W: CheckoutHandler 实例
+    W->>H: execute(req, resp)
+    H->>SM: requireUser(token, user_id)
+    SM-->>H: 鉴权通过
+    H->>DB: BEGIN IMMEDIATE TRANSACTION
+    H->>H: lock_guard(stockMutex) 内存级互斥锁
+    loop 遍历每个商品明细
+        H->>PR: findById(product_id)
+        PR-->>H: Product
+        H->>PR: deductStock(id, qty)<br/>UPDATE stock=stock-qty WHERE stock>=qty
+        PR-->>H: 成功 / 库存不足
+        H->>H: 记录商品快照(name,price) 累加 totalAmount
+    end
+    H->>PF: PromoChainBuilder.build(promo_ids)
+    PF-->>H: 促销链（策略+装饰）
+    H->>H: VIP(level>=2) 包裹 ExtraDiscountDecorator(0.95)
+    H->>H: chain.applyToItems(total, items) → finalAmount
+    H->>OR: insert(order)<br/>order_no UNIQUE 冲突重试≤3次
+    OR-->>H: 成功
+    H->>DB: COMMIT
+    H->>H: OrderEventBus.notifyOrderCreated 观察者广播
+    H-->>W: resp={order_id,order_no,original,discount,final,promo_desc}
+    W->>CH: send(2030, resp)
+    CH-->>TC: TCP 响应报文
+    TC-->>CC: receiveResponse → code=2030
+    CC-->>U: 渲染结算结果
+    Note over H,DB: 任一步失败 → ROLLBACK → 返回 4001（业务错误码）
+    </div>
+  </section>
+
+  <!-- 3. 促销策略类图 -->
+  <section class="diagram" id="d3">
+    <h2>3. 促销策略类图</h2>
+    <p class="caption">IPromotion 为策略接口；四种具体策略（打折/直降/满减/阶梯折扣）；PromotionDecorator 抽象装饰器派生出 ExtraDiscountDecorator（VIP 折上折）与 CompositeDecorator（促销叠加）；PromotionFactory 按数据库记录创建策略，PromoChainBuilder 用装饰模式层层包装成链。</p>
+    <div class="mermaid">
+classDiagram
+    class IPromotion {
+        <<interface>>
+        +int apply(int cents)
+        +int applyToItems(int cents, vector~OrderItem~ items)
+        +int getDiscountAmount(int cents)
+        +string getDescription()
+        +int getId()
+    }
+    class DiscountPromotion {
+        -int id_
+        -double rate_
+        +apply(int) int
+        +getDiscountAmount(int) int
+    }
+    class PriceCutPromotion {
+        -int id_
+        -int cutCents_
+        +apply(int) int
+        +getDiscountAmount(int) int
+    }
+    class CouponPromotion {
+        -int id_
+        -int thresholdCents_
+        -int reduceCents_
+        +apply(int) int
+        +getDiscountAmount(int) int
+    }
+    class TierDiscountPromotion {
+        -int id_
+        -vector~Tier~ rules_
+        +applyToItems(int, vector~OrderItem~) int
+        -tieredPrice(int unit, int qty) int
+    }
+    class PromotionDecorator {
+        <<abstract>>
+        #unique_ptr~IPromotion~ wrapped_
+        +apply(int) int
+        +applyToItems(int, vector~OrderItem~) int
+        +getDiscountAmount(int) int
+    }
+    class ExtraDiscountDecorator {
+        -double extraRate_
+        +apply(int) int
+        +applyToItems(int, vector~OrderItem~) int
+    }
+    class CompositeDecorator {
+        -unique_ptr~IPromotion~ extra_
+        +apply(int) int
+        +applyToItems(int, vector~OrderItem~) int
+    }
+    class PromotionFactory {
+        -shared_ptr~PromotionRepository~ repo_
+        +create(int promoId) unique_ptr~IPromotion~
+        +createFromRecord(Promotion) unique_ptr~IPromotion~
+        -createTierDiscount(Promotion) unique_ptr~IPromotion~
+    }
+    class PromoChainBuilder {
+        +build(vector~int~ ids, PromotionFactory&) unique_ptr~IPromotion~$
+    }
+    class Money {
+        +toCents(double yuan) int$
+    }
+
+    IPromotion <|.. DiscountPromotion
+    IPromotion <|.. PriceCutPromotion
+    IPromotion <|.. CouponPromotion
+    IPromotion <|.. TierDiscountPromotion
+    IPromotion <|.. PromotionDecorator
+    PromotionDecorator <|-- ExtraDiscountDecorator
+    PromotionDecorator <|-- CompositeDecorator
+    PromotionDecorator o-- IPromotion : wrapped_
+    CompositeDecorator o-- IPromotion : extra_
+    PromotionFactory ..> IPromotion : 创建
+    PromotionFactory --> PromotionRepository : 依赖
+    PromoChainBuilder ..> PromotionFactory : 使用
+    TierDiscountPromotion --> OrderItem : 明细感知
+    Money ..> IPromotion : 金额分转换
+    </div>
+  </section>
+
+  <!-- 4. 数据库 ER 图 -->
+  <section class="diagram" id="d4">
+    <h2>4. 数据库 ER 图</h2>
+    <p class="caption">依据 database/schema.sql 实际表结构。六张表：users / products / orders / order_items / returns / promotions。金额全部以整数分存储；order_items 保存商品名称与单价快照。</p>
+    <div class="note">注：order_items.product_id 为逻辑引用，schema 中未建立外键约束（购买后商品可下架/删除，快照保证订单不可变）。</div>
+    <div class="mermaid">
+erDiagram
+    users {
+        int id PK
+        string username UK
+        string password "SHA-256加盐摘要"
+        string real_name
+        string phone
+        int level "1普通 2VIP"
+        datetime register_date
+        datetime last_login
+    }
+    products {
+        int id PK
+        string name
+        int price "单位:分"
+        int stock
+        string description
+        string category
+        string image_url
+        int status "0下架 1上架"
+    }
+    orders {
+        int id PK
+        string order_no UK
+        int user_id FK
+        int total_amount "分"
+        int discount_amount "分"
+        int final_amount "分"
+        int status "0待付1已付2已发3完成4取消5退货中"
+        datetime pay_time
+        datetime create_time
+    }
+    order_items {
+        int id PK
+        int order_id FK
+        int product_id "逻辑引用products.id,无FK约束"
+        string product_name "购买时快照"
+        int price "购买时单价快照,分"
+        int quantity
+    }
+    returns {
+        int id PK
+        int order_id FK
+        int user_id
+        string reason
+        int status "0待审1通过2拒绝3完成"
+        int orig_status "申请时订单原状态,拒绝时恢复"
+        datetime apply_time
+        datetime audit_time
+    }
+    promotions {
+        int id PK
+        string name
+        int type "1打折2直降3满减4阶梯折扣"
+        double param1
+        double param2
+        double param3
+        double param4
+        double param5
+        double param6
+        int status
+    }
+
+    users ||--o{ orders : "下单"
+    orders ||--o{ order_items : "包含明细"
+    orders ||--o{ returns : "申请退货"
+    products ||--o{ order_items : "被购买(逻辑引用)"
+    </div>
+  </section>
+
+  <!-- 5. 结算与库存扣减流程图 -->
+  <section class="diagram" id="d5">
+    <h2>5. 结算与库存扣减流程图</h2>
+    <p class="caption">三重防超卖：① std::mutex 内存级互斥锁 ② UPDATE ... SET stock=stock-qty WHERE stock>=qty 数据库原子扣减 ③ 事务 BEGIN IMMEDIATE + 失败 ROLLBACK。任一步失败即回滚并返回 4001。</p>
+    <div class="mermaid">
+flowchart TD
+    A(["接收 1030 结算请求"]) --> B["Auth.requireUser<br/>校验 token 与 user_id 一致性"]
+    B -->|"鉴权失败"| Z1["返回 4002 未登录"]
+    B -->|"通过"| C["查询用户 / promo_ids 去重"]
+    C --> D{"促销是否存在<br/>且 status=1 未过期?"}
+    D -->|"否"| Z2["返回 4001 err=1007<br/>促销不存在或已过期"]
+    D -->|"是"| E["BEGIN IMMEDIATE TRANSACTION"]
+    E --> F["lock_guard(stockMutex)<br/>内存级互斥锁"]
+    F --> G["遍历 items 逐件处理"]
+    G --> H["ProductRepository.findById"]
+    H --> I{"商品存在?"}
+    I -->|"否"| ROLL["ROLLBACK 回滚事务"]
+    I -->|"是"| J["deductStock 原子扣减<br/>UPDATE stock=stock-qty<br/>WHERE id=? AND stock>=qty"]
+    J --> K{"扣减成功?"}
+    K -->|"否 库存不足"| ROLL
+    K -->|"是"| L["记录商品快照 name/price<br/>累加 totalAmount"]
+    L --> M{"还有下一件?"}
+    M -->|"是"| G
+    M -->|"否"| N["PromoChainBuilder.build<br/>构建促销链(策略+装饰)"]
+    N --> O{"用户 level>=2 VIP?"}
+    O -->|"是"| P["包裹 ExtraDiscountDecorator(0.95)"]
+    O -->|"否"| Q["chain.applyToItems<br/>计算 finalAmount"]
+    P --> Q
+    Q --> R["OrderRepository.insert<br/>order_no UNIQUE 冲突重试≤3次"]
+    R --> S{"插入成功?"}
+    S -->|"否"| ROLL
+    S -->|"是"| T["COMMIT 提交事务"]
+    T --> U["OrderEventBus.notifyOrderCreated<br/>观察者广播订单创建事件"]
+    U --> V(["返回 2030<br/>order_id/order_no/original/<br/>discount/final/promo_desc"])
+    ROLL --> Z3["返回 4001<br/>库存不足/商品不存在/系统繁忙"]
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  微商系统 · 面向对象课程设计 | 所有图表依据实际 C++ 源码绘制 | Mermaid 源文件见 docs/diagrams/
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      primaryColor: '#eff6ff',
+      primaryTextColor: '#1e3a8a',
+      primaryBorderColor: '#2563eb',
+      lineColor: '#6b7280',
+      secondaryColor: '#f0fdf4',
+      tertiaryColor: '#fef3c7',
+      fontFamily: 'Microsoft YaHei, PingFang SC, Segoe UI, sans-serif'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis' },
+    sequence: { mirrorActors: false, messageAlign: 'center' },
+    er: { useMaxWidth: true }
+  });
+</script>
+</body>
+</html>

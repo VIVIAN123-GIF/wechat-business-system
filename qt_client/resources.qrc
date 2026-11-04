@@ -1,0 +1,7 @@
+<RCC>
+  <qresource prefix="/">
+    <file>themes/green.qss</file>
+    <file>themes/blue.qss</file>
+    <file>themes/pink.qss</file>
+  </qresource>
+</RCC>

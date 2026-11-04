@@ -1,0 +1,26 @@
+/* 绿色主题（默认） */
+QWidget { background-color:#f4f7f5; color:#1f2937; font-size:14px; }
+QMainWindow { background-color:#f4f7f5; }
+
+QPushButton {
+  background-color:#16a34a; color:white; border:none;
+  border-radius:5px; padding:7px 14px;
+}
+QPushButton:hover { background-color:#15803d; }
+QPushButton:checked { background-color:#14532d; }
+QPushButton:disabled { background-color:#cbd5e1; color:#64748b; }
+
+QLineEdit, QSpinBox, QComboBox {
+  background-color:white; border:1px solid #cbd5e1;
+  border-radius:4px; padding:5px;
+}
+QHeaderView::section {
+  background-color:#dcfce7; color:#14532d; border:none;
+  padding:6px; font-weight:bold;
+}
+QTableWidget {
+  background-color:white; alternate-background-color:#f0fdf4;
+  gridline-color:#e2e8f0; border:1px solid #e2e8f0;
+}
+QListWidget, QTextEdit { background-color:white; border:1px solid #e2e8f0; }
+QLabel { background:transparent; }

@@ -106,14 +106,22 @@ public:
     }
     void drawCart(const std::map<int, CartItem>& items, double total) override {
         if (items.empty()) { std::cout << theme_.infoOf("购物车为空") << "\n"; return; }
-        std::cout << theme_.accentOf("商品\t数量\t小计") << "\n";
+        const char* sep = "+------+--------------------+------+----------+";
+        std::cout << theme_.borderOf(sep) << "\n"
+                  << theme_.accentOf(
+                      "|  ID  | 商品               | 数量 | 小计     |") << "\n"
+                  << theme_.borderOf(sep) << "\n";
         for (const auto& kv : items) {
             const auto& it = kv.second;
-            std::cout << it.productName << "\t" << it.quantity << "\t"
-                      << std::fixed << std::setprecision(2) << it.getSubtotal() << "\n";
+            std::cout << "| " << padL(std::to_string(it.productId), 4) << " | "
+                      << padR(it.productName, 18) << " | "
+                      << padL(std::to_string(it.quantity), 4) << " | "
+                      << padL(fmtPrice(it.getSubtotal()), 8) << " |\n";
         }
-        std::cout << theme_.accentOf("合计: ") << std::fixed
-                  << std::setprecision(2) << total << "\n";
+        std::cout << theme_.borderOf(sep) << "\n"
+                  << "| 合计" << std::string(22, ' ') << " | "
+                  << padL(fmtPrice(total), 8) << " |\n"
+                  << theme_.borderOf("+------+--------------------+------+----------+") << "\n";
     }
     void drawPromoList(const std::vector<PromoInfo>& promos) override {
         std::cout << theme_.accentOf("可选促销:") << "\n";
@@ -213,22 +221,22 @@ public:
     }
     void drawCart(const std::map<int, CartItem>& items, double total) override {
         if (items.empty()) { std::cout << theme_.infoOf("[购物车] 为空") << "\n"; return; }
+        const char* sep = "+------+--------------------+------+----------+";
         std::cout << theme_.accentOf(
-            "+--------------------+--------+----------+\n"
-            "| 商品               | 数量   | 小计     |\n"
-            "+--------------------+--------+----------+") << "\n";
+            "+------+--------------------+------+----------+\n"
+            "|  ID  | 商品               | 数量 | 小计     |\n"
+            "+------+--------------------+------+----------+") << "\n";
         for (const auto& kv : items) {
             const auto& it = kv.second;
-            std::cout << "| " << std::left << std::setw(18) << it.productName << " | "
-                      << std::right << std::setw(6) << it.quantity << " | "
-                      << std::fixed << std::setprecision(2) << std::setw(8)
-                      << it.getSubtotal() << " |\n";
+            std::cout << "| " << padL(std::to_string(it.productId), 4) << " | "
+                      << padR(it.productName, 18) << " | "
+                      << padL(std::to_string(it.quantity), 4) << " | "
+                      << padL(fmtPrice(it.getSubtotal()), 8) << " |\n";
         }
-        std::cout << theme_.borderOf("+--------------------+--------+----------+") << "\n"
-                  << "| 合计                               | "
-                  << std::fixed << std::setprecision(2) << std::setw(8) << total
-                  << " |\n" << theme_.borderOf("+--------------------+--------+----------+") << "\n";
-        std::cout << std::right;
+        std::cout << theme_.borderOf(sep) << "\n"
+                  << "| 合计" << std::string(22, ' ') << " | "
+                  << padL(fmtPrice(total), 8) << " |\n"
+                  << theme_.borderOf(sep) << "\n";
     }
     void drawPromoList(const std::vector<PromoInfo>& promos) override {
         std::cout << theme_.accentOf(

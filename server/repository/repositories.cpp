@@ -123,13 +123,30 @@ bool OrderRepository::insert(Order& order) {
     if (!ok) return false;
 
     order.id = static_cast<int>(sqlite3_last_insert_rowid(db_));
+    auto cleanupPartialOrder = [this, &order]() {
+        sqlite3_stmt* cleanup = nullptr;
+        if (sqlite3_prepare_v2(db_, "DELETE FROM order_items WHERE order_id=?", -1, &cleanup, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int(cleanup, 1, order.id);
+            sqlite3_step(cleanup);
+        }
+        if (cleanup) sqlite3_finalize(cleanup);
+        cleanup = nullptr;
+        if (sqlite3_prepare_v2(db_, "DELETE FROM orders WHERE id=?", -1, &cleanup, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int(cleanup, 1, order.id);
+            sqlite3_step(cleanup);
+        }
+        if (cleanup) sqlite3_finalize(cleanup);
+    };
 
     // 明细
     const char* sqlItem = "INSERT INTO order_items (order_id, product_id, product_name, price, quantity) "
                           "VALUES (?, ?, ?, ?, ?)";
     for (const auto& item : order.items) {
         sqlite3_stmt* stmt2 = nullptr;
-        if (sqlite3_prepare_v2(db_, sqlItem, -1, &stmt2, nullptr) != SQLITE_OK) return false;
+        if (sqlite3_prepare_v2(db_, sqlItem, -1, &stmt2, nullptr) != SQLITE_OK) {
+            cleanupPartialOrder();
+            return false;
+        }
         sqlite3_bind_int(stmt2, 1, order.id);
         sqlite3_bind_int(stmt2, 2, item.productId);
         sqlite3_bind_text(stmt2, 3, item.productName.c_str(), -1, SQLITE_TRANSIENT);
@@ -137,7 +154,10 @@ bool OrderRepository::insert(Order& order) {
         sqlite3_bind_int(stmt2, 5, item.quantity);
         ok = (sqlite3_step(stmt2) == SQLITE_DONE);
         sqlite3_finalize(stmt2);
-        if (!ok) return false;
+        if (!ok) {
+            cleanupPartialOrder();
+            return false;
+        }
     }
     return true;
 }
@@ -416,7 +436,7 @@ bool ReturnRepository::updateStatus(int returnId, int newStatus) {
 // ---------------- PromotionRepository ----------------
 std::vector<Promotion> PromotionRepository::findAllAvailable() {
     std::vector<Promotion> result;
-    const char* sql = "SELECT id, name, type, param1, param2, status FROM promotions "
+    const char* sql = "SELECT id, name, type, param1, param2, param3, param4, param5, param6, status FROM promotions "
                       "WHERE status = 1 AND (end_time IS NULL OR end_time > datetime('now')) "
                       "ORDER BY id";
     sqlite3_stmt* stmt = nullptr;

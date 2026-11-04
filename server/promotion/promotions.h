@@ -35,7 +35,7 @@ public:
 // ---------- 具体策略：打折 ----------
 class DiscountPromotion : public IPromotion {
 public:
-    DiscountPromotion(int id, double rate) : id_(id), rate_(rate) {}
+    DiscountPromotion(int id, double rate) : id_(id), rate_(std::clamp(rate, 0.0, 1.0)) {}
     int apply(int cents) override { return static_cast<int>(std::round(cents * rate_)); }
     int getDiscountAmount(int cents) override { return cents - apply(cents); }
     std::string getDescription() const override {
@@ -50,7 +50,7 @@ private:
 // ---------- 具体策略：直降 ----------
 class PriceCutPromotion : public IPromotion {
 public:
-    PriceCutPromotion(int id, double cutYuan) : id_(id), cutCents_(Money::toCents(cutYuan)) {}
+    PriceCutPromotion(int id, double cutYuan) : id_(id), cutCents_(Money::toCents(std::max(0.0, cutYuan))) {}
     int apply(int cents) override { return cents > cutCents_ ? cents - cutCents_ : 0; }
     int getDiscountAmount(int cents) override { return cents > cutCents_ ? cutCents_ : cents; }
     std::string getDescription() const override {
@@ -66,7 +66,8 @@ private:
 class CouponPromotion : public IPromotion {
 public:
     CouponPromotion(int id, double thresholdYuan, double reduceYuan)
-        : id_(id), thresholdCents_(Money::toCents(thresholdYuan)), reduceCents_(Money::toCents(reduceYuan)) {}
+        : id_(id), thresholdCents_(Money::toCents(std::max(0.0, thresholdYuan))),
+          reduceCents_(Money::toCents(std::max(0.0, reduceYuan))) {}
     int apply(int cents) override {
         return cents >= thresholdCents_ ? cents - reduceCents_ : cents;
     }
@@ -93,9 +94,14 @@ public:
     struct Tier { int qty; double rate; };   // 件数上限 + 该档折扣率
     TierDiscountPromotion(int id, std::vector<Tier> rules)
         : id_(id), rules_(std::move(rules)) {
-        // 按件数上限升序，保证分档顺序正确
+        rules_.erase(std::remove_if(rules_.begin(), rules_.end(), [](const Tier& tier) {
+            return tier.qty <= 0 || !std::isfinite(tier.rate) || tier.rate < 0.0 || tier.rate > 1.0;
+        }), rules_.end());
         std::sort(rules_.begin(), rules_.end(),
                   [](const Tier& a, const Tier& b) { return a.qty < b.qty; });
+        rules_.erase(std::unique(rules_.begin(), rules_.end(), [](const Tier& a, const Tier& b) {
+            return a.qty == b.qty;
+        }), rules_.end());
     }
 
     // 无明细时无法分档，安全返回原价（不产生优惠）

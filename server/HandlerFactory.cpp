@@ -11,6 +11,12 @@ std::unique_ptr<ICommandHandler> HandlerFactory::create(uint32_t code, HandlerCo
         case C_REQ_REGISTER:       return std::make_unique<RegisterHandler>(ctx);
         case C_REQ_ADD_CART:       return std::make_unique<AddCartHandler>(ctx);
         case C_REQ_PROMO_LIST:     return std::make_unique<PromoListHandler>(ctx);
+        case C_REQ_PROMO_EXPLAIN:  return std::make_unique<PromoExplainHandler>(ctx);
+        case C_REQ_GROUP_CREATE:   return std::make_unique<GroupCreateHandler>(ctx);
+        case C_REQ_GROUP_JOIN:     return std::make_unique<GroupJoinHandler>(ctx);
+        case C_REQ_GROUP_QUERY:    return std::make_unique<GroupQueryHandler>(ctx);
+        case C_REQ_ORDER_STATUS:   return std::make_unique<OrderStatusHandler>(ctx);
+        case C_REQ_ORDER_AUDIT:    return std::make_unique<OrderAuditHandler>(ctx);
         case C_REQ_CHECKOUT:       return std::make_unique<CheckoutHandler>(ctx);
         case C_REQ_ORDER_QUERY:    return std::make_unique<OrderQueryHandler>(ctx);
         case C_REQ_RETURN:         return std::make_unique<ReturnHandler>(ctx);

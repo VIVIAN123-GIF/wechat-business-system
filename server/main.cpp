@@ -149,6 +149,17 @@ int main() {
             LOG_INFO("已迁移 returns 表：新增 orig_status 字段");
         }
 
+        if (!hasColumn(db, "groups", "unit_price")) {
+            if (sqlite3_exec(db,
+                "ALTER TABLE groups ADD COLUMN unit_price INTEGER NOT NULL DEFAULT 0;"
+                "UPDATE groups SET unit_price = COALESCE((SELECT price FROM products WHERE products.id = groups.product_id), 0) WHERE unit_price = 0;",
+                nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("拼团表迁移失败: ") + (errMsg ? errMsg : "unknown"));
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+
         // ===== 老库迁移：存量明文密码就地哈希（杜绝明文落库） =====
         {
             sqlite3_stmt* sel = nullptr;

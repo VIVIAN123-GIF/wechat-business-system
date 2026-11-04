@@ -16,8 +16,11 @@ using json = nlohmann::json;
 
 std::string makeError(int errCode, const std::string& msg) {
     json j;
+    j["success"] = false;
     j["err_code"] = errCode;
     j["err_msg"]  = msg;
+    j["error"] = {{"code", errCode}, {"message", msg}};
+    j["data"] = json::object();
     return j.dump();
 }
 
@@ -296,6 +299,308 @@ bool PromoListHandler::execute(const std::string&, std::string& resp) {
     return true;
 }
 
+namespace {
+struct ExplainResult {
+    int amount = 0;
+    std::vector<int> ids;
+    std::string description;
+};
+
+bool parseItems(const json& j, HandlerContext& ctx, std::vector<OrderItem>& items,
+                int& total, std::string& error) {
+    if (!j.contains("items") || !j["items"].is_array() || j["items"].empty()) {
+        error = "商品明细不能为空";
+        return false;
+    }
+    for (const auto& raw : j["items"]) {
+        if (!raw.is_object() || !raw.value("product_id", 0) || raw.value("quantity", 0) <= 0) {
+            error = "商品明细参数不合法";
+            return false;
+        }
+        auto product = ctx.products->findById(raw.value("product_id", 0));
+        if (!product) { error = "商品不存在"; return false; }
+        OrderItem item;
+        item.productId = product->id;
+        item.productName = product->name;
+        item.price = product->price;
+        item.quantity = raw.value("quantity", 0);
+        items.push_back(item);
+        total += item.price * item.quantity;
+    }
+    return true;
+}
+
+ExplainResult evaluatePromos(const std::vector<int>& ids, const std::vector<OrderItem>& items,
+                             int total, PromotionFactory& factory) {
+    ExplainResult result;
+    result.amount = total;
+    result.ids = ids;
+    std::unique_ptr<IPromotion> chain;
+    for (int id : ids) {
+        auto promo = factory.create(id);
+        if (!promo) continue;
+        if (!chain) chain = std::move(promo);
+        else chain = std::make_unique<CompositeDecorator>(std::move(chain), std::move(promo));
+    }
+    if (chain) {
+        result.amount = chain->applyToItems(total, items);
+        result.description = chain->getDescription();
+    }
+    return result;
+}
+
+ExplainResult evaluatePromoRecords(const std::vector<const Promotion*>& records,
+                                   const std::vector<OrderItem>& items, int total,
+                                   PromotionFactory& factory) {
+    ExplainResult result;
+    result.amount = total;
+    std::unique_ptr<IPromotion> chain;
+    for (const Promotion* record : records) {
+        if (!record) continue;
+        auto promo = factory.createFromRecord(*record);
+        if (!promo) continue;
+        result.ids.push_back(record->id);
+        if (!chain) chain = std::move(promo);
+        else chain = std::make_unique<CompositeDecorator>(std::move(chain), std::move(promo));
+    }
+    if (chain) {
+        result.amount = chain->applyToItems(total, items);
+        result.description = chain->getDescription();
+    }
+    return result;
+}
+
+void expireGroups(HandlerContext& ctx) {
+    if (!ctx.db || !ctx.stockMutex) return;
+    std::lock_guard<std::mutex> lock(*ctx.stockMutex);
+    if (sqlite3_exec(ctx.db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) != SQLITE_OK) return;
+    struct ExpiredGroup { int id; int productId; int memberCount; };
+    std::vector<ExpiredGroup> expired;
+    sqlite3_stmt* stmt = nullptr;
+    const char* query = "SELECT id,product_id,member_count FROM groups WHERE status=0 AND deadline<=datetime('now')";
+    bool ok = sqlite3_prepare_v2(ctx.db, query, -1, &stmt, nullptr) == SQLITE_OK;
+    while (ok && sqlite3_step(stmt) == SQLITE_ROW) {
+        expired.push_back({sqlite3_column_int(stmt, 0), sqlite3_column_int(stmt, 1), sqlite3_column_int(stmt, 2)});
+    }
+    if (stmt) sqlite3_finalize(stmt);
+    for (const auto& group : expired) {
+        if (!ctx.products->restoreStock(group.productId, group.memberCount)) { ok = false; break; }
+        sqlite3_stmt* update = nullptr;
+        if (sqlite3_prepare_v2(ctx.db, "UPDATE groups SET status=2 WHERE id=? AND status=0", -1, &update, nullptr) != SQLITE_OK) { ok = false; break; }
+        sqlite3_bind_int(update, 1, group.id);
+        ok = sqlite3_step(update) == SQLITE_DONE;
+        sqlite3_finalize(update);
+    }
+    sqlite3_exec(ctx.db, ok ? "COMMIT" : "ROLLBACK", nullptr, nullptr, nullptr);
+}
+
+void appendAudit(sqlite3* db, int orderId, int operatorId, const std::string& action,
+                 int fromStatus, int toStatus, const std::string& detail) {
+    const char* sql = "INSERT INTO order_audit_logs(order_id,operator_id,action,from_status,to_status,detail) VALUES(?,?,?,?,?,?)";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) return;
+    sqlite3_bind_int(stmt, 1, orderId);
+    sqlite3_bind_int(stmt, 2, operatorId);
+    sqlite3_bind_text(stmt, 3, action.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 4, fromStatus);
+    sqlite3_bind_int(stmt, 5, toStatus);
+    sqlite3_bind_text(stmt, 6, detail.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+bool createGroupOrders(HandlerContext& ctx, int groupId, int productId, int unitPrice) {
+    auto product = ctx.products->findById(productId);
+    if (!product) return false;
+
+    std::vector<int> memberIds;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(ctx.db, "SELECT user_id FROM group_members WHERE group_id=? ORDER BY id", -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_int(stmt, 1, groupId);
+    while (sqlite3_step(stmt) == SQLITE_ROW) memberIds.push_back(sqlite3_column_int(stmt, 0));
+    sqlite3_finalize(stmt);
+
+    for (int memberId : memberIds) {
+        Order order;
+        order.orderNo = "GP" + std::to_string(groupId) + "-" + std::to_string(memberId);
+        order.userId = memberId;
+        order.totalAmount = unitPrice;
+        order.finalAmount = unitPrice;
+        order.status = ORDER_PAID;
+        OrderItem item;
+        item.productId = product->id;
+        item.productName = product->name;
+        item.price = unitPrice;
+        item.quantity = 1;
+        order.items.push_back(item);
+        if (!ctx.orders->insert(order)) return false;
+
+        const char* linkSql = "INSERT INTO group_orders(group_id,user_id,order_id) VALUES(?,?,?)";
+        if (sqlite3_prepare_v2(ctx.db, linkSql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+        sqlite3_bind_int(stmt, 1, groupId);
+        sqlite3_bind_int(stmt, 2, memberId);
+        sqlite3_bind_int(stmt, 3, order.id);
+        bool linked = sqlite3_step(stmt) == SQLITE_DONE;
+        sqlite3_finalize(stmt);
+        if (!linked) return false;
+        appendAudit(ctx.db, order.id, memberId, "group_completed", -1, ORDER_PAID, "拼团成功并生成订单");
+    }
+    return !memberIds.empty();
+}
+}
+
+bool PromoExplainHandler::execute(const std::string& req, std::string& resp) {
+    try {
+        auto j = json::parse(req);
+        int userId = j.value("user_id", 0);
+        std::string authErr;
+        if (!Auth::requireUser(ctx_, j, userId, authErr)) { resp = makeError(ErrorCodes::UNAUTHORIZED, authErr); return false; }
+        std::vector<OrderItem> items; int total = 0; std::string error;
+        if (!parseItems(j, ctx_, items, total, error)) { resp = makeError(ErrorCodes::CART_EMPTY, error); return false; }
+        std::vector<int> currentIds;
+        if (j.contains("promo_ids") && j["promo_ids"].is_array()) {
+            for (const auto& id : j["promo_ids"]) {
+                if (!id.is_number_integer()) { resp = makeError(ErrorCodes::PROMO_EXPIRED, "促销编号必须是整数"); return false; }
+                int promoId = id.get<int>();
+                if (std::find(currentIds.begin(), currentIds.end(), promoId) != currentIds.end()) continue;
+                if (!ctx_.promoFactory->create(promoId)) { resp = makeError(ErrorCodes::PROMO_EXPIRED, "促销不存在或已失效"); return false; }
+                currentIds.push_back(promoId);
+            }
+        }
+        auto current = evaluatePromos(currentIds, items, total, *ctx_.promoFactory);
+        const auto available = ctx_.promos->findAllAvailable();
+        ExplainResult best = evaluatePromos({}, items, total, *ctx_.promoFactory);
+        const size_t limit = std::min<size_t>(available.size(), 12);
+        const unsigned long long combinations = 1ULL << limit;
+        for (unsigned long long mask = 1; mask < combinations; ++mask) {
+            std::vector<const Promotion*> candidate;
+            for (size_t i = 0; i < limit; ++i) if (mask & (1ULL << i)) candidate.push_back(&available[i]);
+            auto evaluated = evaluatePromoRecords(candidate, items, total, *ctx_.promoFactory);
+            if (evaluated.amount < best.amount) best = std::move(evaluated);
+        }
+        json out;
+        out["original"] = total;
+        out["current"] = {{"amount", current.amount}, {"discount", total - current.amount},
+                           {"promo_ids", current.ids}, {"description", current.description}};
+        out["best"] = {{"amount", best.amount}, {"discount", total - best.amount},
+                        {"promo_ids", best.ids}, {"description", best.description}};
+        out["saving_vs_current"] = current.amount - best.amount;
+        out["lines"] = json::array();
+        int currentAllocated = 0;
+        int bestAllocated = 0;
+        for (size_t index = 0; index < items.size(); ++index) {
+            const auto& item = items[index];
+            int original = item.price * item.quantity;
+            int currentDiscount = total > 0 ? (total - current.amount) * original / total : 0;
+            int bestDiscount = total > 0 ? (total - best.amount) * original / total : 0;
+            if (index + 1 == items.size()) {
+                currentDiscount = (total - current.amount) - currentAllocated;
+                bestDiscount = (total - best.amount) - bestAllocated;
+            }
+            currentAllocated += currentDiscount;
+            bestAllocated += bestDiscount;
+            out["lines"].push_back({{"product_id", item.productId}, {"name", item.productName},
+                                     {"quantity", item.quantity}, {"original", original},
+                                     {"current_discount", currentDiscount}, {"current_amount", original - currentDiscount},
+                                     {"best_discount", bestDiscount}, {"best_amount", original - bestDiscount}});
+        }
+        out["tips"] = json::array();
+        for (const auto& p : available) {
+            if (p.type == 4 && p.param3 > 0 && p.param3 > items.front().quantity && p.param4 <= 0.0) {
+                out["tips"].push_back("再购买 " + std::to_string(static_cast<int>(p.param3 - items.front().quantity)) + " 件可触发第3阶梯免单");
+            }
+        }
+        resp = out.dump();
+        return true;
+    } catch (const std::exception& e) { resp = makeError(ErrorCodes::SYSTEM_BUSY, e.what()); return false; }
+}
+
+bool GroupCreateHandler::execute(const std::string& req, std::string& resp) {
+    try {
+        auto j = json::parse(req); int userId = j.value("user_id", 0); std::string authErr;
+        if (!Auth::requireUser(ctx_, j, userId, authErr)) { resp = makeError(ErrorCodes::UNAUTHORIZED, authErr); return false; }
+        int productId = j.value("product_id", 0), target = j.value("target_count", 2), hours = j.value("hours", 24);
+        auto product = ctx_.products->findById(productId);
+        if (target < 2 || target > 100 || hours <= 0 || hours > 168 || !product) {
+            resp = makeError(ErrorCodes::PRODUCT_NOT_FOUND, "拼团参数不合法"); return false;
+        }
+        std::lock_guard<std::mutex> stockLock(*ctx_.stockMutex);
+        if (sqlite3_exec(ctx_.db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) != SQLITE_OK) {
+            resp = makeError(ErrorCodes::SYSTEM_BUSY, "拼团繁忙"); return false;
+        }
+        if (!ctx_.products->deductStock(productId, 1)) {
+            sqlite3_exec(ctx_.db, "ROLLBACK", nullptr, nullptr, nullptr);
+            resp = makeError(ErrorCodes::STOCK_NOT_ENOUGH, "拼团商品库存不足"); return false;
+        }
+        std::string groupNo = "G" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+        const char* sql = "INSERT INTO groups(group_no,product_id,creator_id,unit_price,target_count,member_count,status,deadline) VALUES(?,?,?,?,?,1,0,datetime('now', ?))";
+        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(ctx_.db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_exec(ctx_.db, "ROLLBACK", nullptr, nullptr, nullptr); resp = makeError(ErrorCodes::SYSTEM_BUSY, "拼团创建失败"); return false; }
+        std::string modifier = "+" + std::to_string(hours) + " hours";
+        sqlite3_bind_text(stmt, 1, groupNo.c_str(), -1, SQLITE_TRANSIENT); sqlite3_bind_int(stmt, 2, productId); sqlite3_bind_int(stmt, 3, userId); sqlite3_bind_int(stmt, 4, product->price); sqlite3_bind_int(stmt, 5, target); sqlite3_bind_text(stmt, 6, modifier.c_str(), -1, SQLITE_TRANSIENT);
+        bool ok = sqlite3_step(stmt) == SQLITE_DONE; sqlite3_finalize(stmt); if (!ok) { sqlite3_exec(ctx_.db, "ROLLBACK", nullptr, nullptr, nullptr); resp = makeError(ErrorCodes::SYSTEM_BUSY, "拼团创建失败"); return false; }
+        int groupId = static_cast<int>(sqlite3_last_insert_rowid(ctx_.db));
+        const char* memberSql = "INSERT INTO group_members(group_id,user_id) VALUES(?,?)";
+        if (sqlite3_prepare_v2(ctx_.db, memberSql, -1, &stmt, nullptr) != SQLITE_OK) {
+            sqlite3_exec(ctx_.db, "ROLLBACK", nullptr, nullptr, nullptr);
+            resp = makeError(ErrorCodes::SYSTEM_BUSY, "拼团成员创建失败");
+            return false;
+        }
+        sqlite3_bind_int(stmt, 1, groupId);
+        sqlite3_bind_int(stmt, 2, userId);
+        bool memberInserted = sqlite3_step(stmt) == SQLITE_DONE;
+        sqlite3_finalize(stmt);
+        if (!memberInserted) {
+            sqlite3_exec(ctx_.db, "ROLLBACK", nullptr, nullptr, nullptr);
+            resp = makeError(ErrorCodes::SYSTEM_BUSY, "拼团成员创建失败");
+            return false;
+        }
+        if (sqlite3_exec(ctx_.db, "COMMIT", nullptr, nullptr, nullptr) != SQLITE_OK) {
+            sqlite3_exec(ctx_.db, "ROLLBACK", nullptr, nullptr, nullptr);
+            resp = makeError(ErrorCodes::SYSTEM_BUSY, "拼团创建提交失败");
+            return false;
+        }
+        resp = json({{"success", true}, {"group_id", groupId}, {"group_no", groupNo}, {"status", 0}, {"member_count", 1}, {"target_count", target}}).dump(); return true;
+    } catch (const std::exception& e) { resp = makeError(ErrorCodes::SYSTEM_BUSY, e.what()); return false; }
+}
+
+bool GroupJoinHandler::execute(const std::string& req, std::string& resp) {
+    try {
+        auto j = json::parse(req); int userId=j.value("user_id",0); std::string authErr;
+        if (!Auth::requireUser(ctx_, j, userId, authErr)) { resp=makeError(ErrorCodes::UNAUTHORIZED,authErr); return false; }
+        int groupId=j.value("group_id",0); char* err=nullptr;
+        std::lock_guard<std::mutex> stockLock(*ctx_.stockMutex);
+        if (sqlite3_exec(ctx_.db,"BEGIN IMMEDIATE",nullptr,nullptr,&err)!=SQLITE_OK) { resp=makeError(ErrorCodes::SYSTEM_BUSY,"拼团繁忙"); return false; }
+        sqlite3_stmt* stmt=nullptr; const char* q="SELECT product_id,target_count,member_count,status,unit_price FROM groups WHERE id=? AND deadline>datetime('now')";
+        if (sqlite3_prepare_v2(ctx_.db,q,-1,&stmt,nullptr)!=SQLITE_OK) { sqlite3_exec(ctx_.db,"ROLLBACK",nullptr,nullptr,nullptr); resp=makeError(ErrorCodes::SYSTEM_BUSY,"拼团不存在"); return false; }
+        sqlite3_bind_int(stmt,1,groupId); bool found=sqlite3_step(stmt)==SQLITE_ROW; int productId=found?sqlite3_column_int(stmt,0):0; int target=found?sqlite3_column_int(stmt,1):0; int members=found?sqlite3_column_int(stmt,2):0; int status=found?sqlite3_column_int(stmt,3):1; int unitPrice=found?sqlite3_column_int(stmt,4):0; sqlite3_finalize(stmt);
+        if (!found || status != 0 || members >= target) { sqlite3_exec(ctx_.db,"ROLLBACK",nullptr,nullptr,nullptr); resp=makeError(ErrorCodes::ORDER_STATUS_FORBID,"拼团已结束或已满"); return false; }
+        const char* member="INSERT INTO group_members(group_id,user_id) VALUES(?,?)"; if (sqlite3_prepare_v2(ctx_.db,member,-1,&stmt,nullptr)!=SQLITE_OK) { sqlite3_exec(ctx_.db,"ROLLBACK",nullptr,nullptr,nullptr); resp=makeError(ErrorCodes::SYSTEM_BUSY,"加入失败"); return false; } sqlite3_bind_int(stmt,1,groupId); sqlite3_bind_int(stmt,2,userId); bool inserted=sqlite3_step(stmt)==SQLITE_DONE; sqlite3_finalize(stmt);
+        if (!inserted || !ctx_.products->deductStock(productId,1)) { sqlite3_exec(ctx_.db,"ROLLBACK",nullptr,nullptr,nullptr); resp=makeError(ErrorCodes::STOCK_NOT_ENOUGH,"库存不足或已加入"); return false; }
+        const char* update="UPDATE groups SET member_count=member_count+1,status=CASE WHEN member_count+1>=target_count THEN 1 ELSE 0 END WHERE id=?";
+        if (sqlite3_prepare_v2(ctx_.db, update, -1, &stmt, nullptr) != SQLITE_OK) {
+            sqlite3_exec(ctx_.db, "ROLLBACK", nullptr, nullptr, nullptr);
+            resp = makeError(ErrorCodes::SYSTEM_BUSY, "拼团状态更新失败");
+            return false;
+        }
+        sqlite3_bind_int(stmt, 1, groupId);
+        bool groupUpdated = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(ctx_.db) == 1;
+        sqlite3_finalize(stmt);
+        if (groupUpdated && members + 1 >= target) {
+            groupUpdated = createGroupOrders(ctx_, groupId, productId, unitPrice);
+        }
+        if (!groupUpdated || sqlite3_exec(ctx_.db, "COMMIT", nullptr, nullptr, nullptr) != SQLITE_OK) {
+            sqlite3_exec(ctx_.db, "ROLLBACK", nullptr, nullptr, nullptr);
+            resp = makeError(ErrorCodes::SYSTEM_BUSY, "拼团状态更新失败");
+            return false;
+        }
+        resp=json({{"success",true},{"group_id",groupId},{"joined",true},{"member_count",members+1},{"target_count",target},{"status",members+1>=target?1:0}}).dump(); return true;
+    } catch (const std::exception& e) { sqlite3_exec(ctx_.db,"ROLLBACK",nullptr,nullptr,nullptr); resp=makeError(ErrorCodes::SYSTEM_BUSY,e.what()); return false; }
+}
+
+bool GroupQueryHandler::execute(const std::string& req, std::string& resp) {
+    try { expireGroups(ctx_); auto j=json::parse(req); int userId=j.value("user_id",0); std::string authErr; if(!Auth::requireUser(ctx_,j,userId,authErr)){resp=makeError(ErrorCodes::UNAUTHORIZED,authErr);return false;} const char* q="SELECT id,group_no,product_id,target_count,member_count,status,deadline FROM groups WHERE status=0 AND deadline>datetime('now') ORDER BY id DESC"; sqlite3_stmt* s=nullptr; json out=json::array(); if(sqlite3_prepare_v2(ctx_.db,q,-1,&s,nullptr)==SQLITE_OK){while(sqlite3_step(s)==SQLITE_ROW) out.push_back({{"group_id",sqlite3_column_int(s,0)},{"group_no",reinterpret_cast<const char*>(sqlite3_column_text(s,1))},{"product_id",sqlite3_column_int(s,2)},{"target_count",sqlite3_column_int(s,3)},{"member_count",sqlite3_column_int(s,4)},{"status",sqlite3_column_int(s,5)},{"deadline",reinterpret_cast<const char*>(sqlite3_column_text(s,6))}});sqlite3_finalize(s);} resp=json({{"groups",out}}).dump();return true;} catch(const std::exception&e){resp=makeError(ErrorCodes::SYSTEM_BUSY,e.what());return false;}
+}
+
 // ---------------- 结算 ----------------
 std::string CheckoutHandler::makeOrderNo() {
     auto t = std::time(nullptr);
@@ -330,9 +635,17 @@ bool CheckoutHandler::execute(const std::string& req, std::string& resp) {
 
         std::vector<int> promoIds;
         if (j.contains("promo_ids")) {
+            if (!j["promo_ids"].is_array()) {
+                resp = makeError(ErrorCodes::PROMO_EXPIRED, "promo_ids 必须是数组");
+                return false;
+            }
             // 去重：防止同一促销重复叠加（如 0.9×0.9）
             std::set<int> uniqueSet;
             for (auto& id : j["promo_ids"]) {
+                if (!id.is_number_integer()) {
+                    resp = makeError(ErrorCodes::PROMO_EXPIRED, "促销 ID 必须是整数");
+                    return false;
+                }
                 int pid = id.get<int>();
                 if (uniqueSet.insert(pid).second) promoIds.push_back(pid);
             }
@@ -353,6 +666,7 @@ bool CheckoutHandler::execute(const std::string& req, std::string& resp) {
         std::unique_ptr<IPromotion> chain;  // 促销链（作用域需覆盖响应构造）
 
         sqlite3* db = ctx_.db;
+        std::lock_guard<std::mutex> lock(*ctx_.stockMutex);
 
         // ===== 事务开始（BEGIN IMMEDIATE 避免读写锁升级死锁） =====
         char* errMsg = nullptr;
@@ -363,9 +677,6 @@ bool CheckoutHandler::execute(const std::string& req, std::string& resp) {
 
         bool ok = true;
         std::string failMsg;
-
-        // 内存级互斥锁 + 数据库原子扣减（双保险防超卖）
-        std::lock_guard<std::mutex> lock(*ctx_.stockMutex);
 
         if (!j.contains("items") || j["items"].empty()) {
             ok = false; failMsg = "购物车为空";
@@ -419,6 +730,8 @@ bool CheckoutHandler::execute(const std::string& req, std::string& resp) {
             if (!inserted) {
                 ok = false; failMsg = "订单保存失败，请重试";
                 resp = makeError(ErrorCodes::SYSTEM_BUSY, failMsg);
+            } else {
+                appendAudit(db, order.id, userId, "create_order", -1, order.status, "订单创建并完成结算");
             }
         }
 
@@ -541,6 +854,23 @@ bool ReturnHandler::execute(const std::string& req, std::string& resp) {
             resp = makeError(ErrorCodes::ORDER_STATUS_FORBID, "订单状态不允许退货");
             return false;
         }
+        // 订单时间由 SQLite 以 UTC 写入，因此也由 SQLite 计算时间差，避免本地时区偏移。
+        sqlite3_stmt* ageStmt = nullptr;
+        const char* ageSql = "SELECT (julianday('now') - julianday(?)) * 86400.0";
+        bool withinReturnWindow = false;
+        if (sqlite3_prepare_v2(db, ageSql, -1, &ageStmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(ageStmt, 1, order->createTime.c_str(), -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(ageStmt) == SQLITE_ROW) {
+                double ageSeconds = sqlite3_column_double(ageStmt, 0);
+                withinReturnWindow = ageSeconds >= 0.0 && ageSeconds <= 7.0 * 24.0 * 3600.0;
+            }
+        }
+        if (ageStmt) sqlite3_finalize(ageStmt);
+        if (!withinReturnWindow) {
+            sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
+            resp = makeError(ErrorCodes::ORDER_STATUS_FORBID, "已超过7天退货期限");
+            return false;
+        }
 
         // 原子置为"退货中"（条件更新防并发重复申请）
         if (!ctx_.orders->updateStatusIf(orderId, ORDER_RETURNING, ORDER_PAID, ORDER_SHIPPED, ORDER_COMPLETED)) {
@@ -560,6 +890,7 @@ bool ReturnHandler::execute(const std::string& req, std::string& resp) {
             resp = makeError(ErrorCodes::SYSTEM_BUSY, "退货申请失败");
             return false;
         }
+        appendAudit(db, orderId, userId, "apply_return", order->status, ORDER_RETURNING, "提交退货申请");
 
         if (sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr) != SQLITE_OK) {
             sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
@@ -663,10 +994,12 @@ bool ReturnAuditHandler::execute(const std::string& req, std::string& resp) {
             }
             if (ok) ok = ctx_.orders->updateStatus(order->id, ORDER_CANCELLED);  // 已取消（已退款）
             if (ok) ok = ctx_.returns->updateStatus(returnId, RETURN_APPROVED);
+            if (ok) appendAudit(db, order->id, adminId, "approve_return", ORDER_RETURNING, ORDER_CANCELLED, "退货审核通过并回补库存");
         } else {
             // 拒绝：订单恢复申请前状态
             ok = ctx_.orders->updateStatus(order->id, rr->origStatus);
             if (ok) ok = ctx_.returns->updateStatus(returnId, RETURN_REJECTED);
+            if (ok) appendAudit(db, order->id, adminId, "reject_return", ORDER_RETURNING, rr->origStatus, "退货审核拒绝并恢复订单状态");
         }
 
         if (!ok) {
@@ -697,6 +1030,33 @@ bool ReturnAuditHandler::execute(const std::string& req, std::string& resp) {
 }
 
 // ---------------- 心跳 ----------------
+bool OrderStatusHandler::execute(const std::string& req, std::string& resp) {
+    try {
+        auto j = json::parse(req); int adminId = 0; std::string authErr;
+        if (!Auth::requireAdmin(ctx_, j, adminId, authErr)) { resp = makeError(ErrorCodes::UNAUTHORIZED, authErr); return false; }
+        int orderId = j.value("order_id", 0), target = j.value("status", -1);
+        auto order = ctx_.orders->findById(orderId);
+        if (!order || (target != ORDER_SHIPPED && target != ORDER_COMPLETED)) { resp = makeError(ErrorCodes::ORDER_NOT_FOUND, "订单或目标状态不合法"); return false; }
+        bool allowed = (order->status == ORDER_PAID && target == ORDER_SHIPPED) || (order->status == ORDER_SHIPPED && target == ORDER_COMPLETED);
+        if (!allowed || !ctx_.orders->updateStatusIf(orderId, target, order->status, order->status, order->status)) { resp = makeError(ErrorCodes::ORDER_STATUS_FORBID, "不允许的订单状态转换"); return false; }
+        appendAudit(ctx_.db, orderId, adminId, "change_status", order->status, target, "管理员状态流转");
+        resp = json({{"success", true}, {"order_id", orderId}, {"from_status", order->status}, {"status", target}}).dump(); return true;
+    } catch (const std::exception& e) { resp = makeError(ErrorCodes::SYSTEM_BUSY, e.what()); return false; }
+}
+
+bool OrderAuditHandler::execute(const std::string& req, std::string& resp) {
+    try {
+        auto j = json::parse(req); int userId = j.value("user_id", 0); std::string authErr;
+        if (!Auth::requireUser(ctx_, j, userId, authErr)) { resp = makeError(ErrorCodes::UNAUTHORIZED, authErr); return false; }
+        int orderId = j.value("order_id", 0); auto order = ctx_.orders->findById(orderId); auto viewer = ctx_.users->findById(userId);
+        if (!order || (order->userId != userId && (!viewer || viewer->level < 2))) { resp = makeError(ErrorCodes::NO_PERMISSION, "无权查看该订单审计记录"); return false; }
+        const char* sql = "SELECT id,operator_id,action,from_status,to_status,detail,created_at FROM order_audit_logs WHERE order_id=? ORDER BY id";
+        sqlite3_stmt* stmt=nullptr; json logs=json::array();
+        if (sqlite3_prepare_v2(ctx_.db, sql, -1, &stmt, nullptr)==SQLITE_OK) { sqlite3_bind_int(stmt,1,orderId); while(sqlite3_step(stmt)==SQLITE_ROW) logs.push_back({{"id",sqlite3_column_int(stmt,0)},{"operator_id",sqlite3_column_int(stmt,1)},{"action",reinterpret_cast<const char*>(sqlite3_column_text(stmt,2))},{"from_status",sqlite3_column_int(stmt,3)},{"to_status",sqlite3_column_int(stmt,4)},{"detail",reinterpret_cast<const char*>(sqlite3_column_text(stmt,5))},{"created_at",reinterpret_cast<const char*>(sqlite3_column_text(stmt,6))}}); sqlite3_finalize(stmt); }
+        resp=json({{"order_id",orderId},{"audit",logs}}).dump(); return true;
+    } catch(const std::exception& e){resp=makeError(ErrorCodes::SYSTEM_BUSY,e.what());return false;}
+}
+
 bool HeartbeatHandler::execute(const std::string& req, std::string& resp) {
     json out;
     out["server_time"] = std::time(nullptr);

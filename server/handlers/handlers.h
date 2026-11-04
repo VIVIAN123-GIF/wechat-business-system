@@ -121,6 +121,51 @@ private:
     HandlerContext& ctx_;
 };
 
+class PromoExplainHandler : public ICommandHandler {
+public:
+    explicit PromoExplainHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+
+class GroupCreateHandler : public ICommandHandler {
+public:
+    explicit GroupCreateHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+class GroupJoinHandler : public ICommandHandler {
+public:
+    explicit GroupJoinHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+class GroupQueryHandler : public ICommandHandler {
+public:
+    explicit GroupQueryHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+
+class OrderStatusHandler : public ICommandHandler {
+public:
+    explicit OrderStatusHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+class OrderAuditHandler : public ICommandHandler {
+public:
+    explicit OrderAuditHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+
 // ---------- 结算（核心：事务 + 库存互斥 + 促销链） ----------
 class CheckoutHandler : public ICommandHandler {
 public:

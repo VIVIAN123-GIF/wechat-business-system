@@ -1,6 +1,6 @@
 -- ============================================================
 -- 微商系统 数据库结构 (SQLite)
--- 依据: 第三周报告《数据库详细设计》
+-- 依据: 《数据库详细设计》
 -- 表: users / products / orders / order_items / returns / promotions
 -- ============================================================
 
@@ -91,3 +91,56 @@ CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_returns_order_id ON returns(order_id);
+
+CREATE TABLE IF NOT EXISTS order_audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER NOT NULL,
+    operator_id INTEGER,
+    action TEXT NOT NULL,
+    from_status INTEGER,
+    to_status INTEGER,
+    detail TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (order_id) REFERENCES orders(id),
+    FOREIGN KEY (operator_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_no TEXT NOT NULL UNIQUE,
+    product_id INTEGER NOT NULL,
+    creator_id INTEGER NOT NULL,
+    unit_price INTEGER NOT NULL CHECK(unit_price >= 0),
+    target_count INTEGER NOT NULL CHECK(target_count >= 2),
+    member_count INTEGER NOT NULL DEFAULT 1,
+    status INTEGER NOT NULL DEFAULT 0,
+    deadline DATETIME NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (product_id) REFERENCES products(id),
+    FOREIGN KEY (creator_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS group_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(group_id, user_id),
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS group_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    order_id INTEGER NOT NULL UNIQUE,
+    UNIQUE(group_id, user_id),
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (order_id) REFERENCES orders(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_audit_order_id ON order_audit_logs(order_id);
+CREATE INDEX IF NOT EXISTS idx_groups_status_deadline ON groups(status, deadline);
+CREATE INDEX IF NOT EXISTS idx_group_orders_group_id ON group_orders(group_id);

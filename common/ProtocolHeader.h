@@ -62,6 +62,18 @@ namespace ProtocolConstants {
     // 系统
     constexpr uint32_t C_REQ_HEARTBEAT    = 1999;
     constexpr uint32_t S_RES_HEARTBEAT    = 2999;
+    constexpr uint32_t C_REQ_PROMO_EXPLAIN = 1090;
+    constexpr uint32_t S_RES_PROMO_EXPLAIN = 2090;
+    constexpr uint32_t C_REQ_GROUP_CREATE = 1091;
+    constexpr uint32_t S_RES_GROUP_CREATE = 2091;
+    constexpr uint32_t C_REQ_GROUP_JOIN = 1092;
+    constexpr uint32_t S_RES_GROUP_JOIN = 2092;
+    constexpr uint32_t C_REQ_GROUP_QUERY = 1093;
+    constexpr uint32_t S_RES_GROUP_QUERY = 2093;
+    constexpr uint32_t C_REQ_ORDER_STATUS = 1095;
+    constexpr uint32_t S_RES_ORDER_STATUS = 2095;
+    constexpr uint32_t C_REQ_ORDER_AUDIT = 1096;
+    constexpr uint32_t S_RES_ORDER_AUDIT = 2096;
     // 错误
     constexpr uint32_t S_ERR_GENERAL      = 4001;
     constexpr uint32_t S_ERR_UNAUTH       = 4002;

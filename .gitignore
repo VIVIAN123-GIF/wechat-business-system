@@ -16,12 +16,30 @@ build/
 bin/
 out/
 cmake-build-*/
+build-cmake/
+build-cmake-verify/
+build-feature/
+build-feature-final/
+build-ninja/
+qt_client_release/
 *.iml
 .idea/
 .vscode/
 .settings/
 .project
 .classpath
+
+# Local integration/feature run scratch dirs
+.debug-integration/
+.feature-run*/
+.integration-*/
+
+# Archives / packaged releases (source is tracked, binaries are not)
+*.zip
+
+# Local DB backups
+*.db.bak
+*.db.bak2
 
 # Logs and temp files
 *.log

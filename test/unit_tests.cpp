@@ -100,5 +100,20 @@ int main() {
 
     std::cout << "\n========== 单元测试结果: " << g_pass << " passed, "
               << g_fail << " failed ==========\n";
+    std::cout << "\n--- 促销边界参数 ---\n";
+    DiscountPromotion invalidDiscount(7, -0.5);
+    CHECK_EQ_INT(invalidDiscount.apply(10000), 0);
+    PriceCutPromotion invalidCut(8, -50.0);
+    CHECK_EQ_INT(invalidCut.apply(10000), 10000);
+    CouponPromotion invalidCoupon(9, -100.0, -30.0);
+    CHECK_EQ_INT(invalidCoupon.apply(10000), 10000);
+
+    TierDiscountPromotion duplicateTiers(10, {{2, 0.9}, {2, 0.8}, {-1, 0.5}, {3, 0.0}});
+    CHECK_EQ_INT(duplicateTiers.applyToItems(0, makeItems(10000, 3)), 18000);
+    TierDiscountPromotion emptyTiers(11, {{0, 0.9}, {-1, -0.5}});
+    CHECK_EQ_INT(emptyTiers.applyToItems(0, makeItems(10000, 2)), 20000);
+
+    std::cout << "========== final unit test result: " << g_pass << " passed, "
+              << g_fail << " failed ==========\n";
     return g_fail > 0 ? 1 : 0;
 }

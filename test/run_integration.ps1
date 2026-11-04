@@ -1,0 +1,54 @@
+param(
+    [Parameter(Mandatory = $true)] [string] $ServerExe,
+    [Parameter(Mandatory = $true)] [string] $TestExe,
+    [Parameter(Mandatory = $true)] [string] $ProjectRoot
+)
+
+$runRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("wechat-mall-integration-" + [guid]::NewGuid().ToString("N"))
+$databaseRoot = Join-Path $runRoot "database"
+New-Item -ItemType Directory -Path $databaseRoot -Force | Out-Null
+Copy-Item (Join-Path $ProjectRoot "database\schema.sql") $databaseRoot -Force
+Copy-Item (Join-Path $ProjectRoot "database\init_data.sql") $databaseRoot -Force
+
+$serverPath = Join-Path $runRoot "server.exe"
+$testPath = Join-Path $runRoot "test_integration.exe"
+Copy-Item $ServerExe $serverPath -Force
+Copy-Item $TestExe $testPath -Force
+
+$server = $null
+$exitCode = 1
+try {
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $serverPath
+    $startInfo.WorkingDirectory = $runRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $server = New-Object System.Diagnostics.Process
+    $server.StartInfo = $startInfo
+    [void]$server.Start()
+    Start-Sleep -Seconds 2
+
+    if ($server.HasExited) {
+        throw "server exited before integration test started"
+    }
+
+    & $testPath
+    $exitCode = $LASTEXITCODE
+}
+finally {
+    if ($null -ne $server -and -not $server.HasExited) {
+        $server.StandardInput.WriteLine("q")
+        $server.StandardInput.Close()
+        if (-not $server.WaitForExit(5000)) {
+            $server.Kill()
+            $server.WaitForExit()
+        }
+    }
+
+    Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+exit $exitCode

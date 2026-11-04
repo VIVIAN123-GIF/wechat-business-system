@@ -37,13 +37,22 @@ struct Conn {
     bool connect(const char* ip = "127.0.0.1", int port = 8888) {
         WSADATA wsa;
         WSAStartup(MAKEWORD(2, 2), &wsa);
-        fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (fd == INVALID_SOCKET) return false;
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(static_cast<u_short>(port));
         addr.sin_addr.s_addr = inet_addr(ip);
-        return ::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
+        for (int attempt = 0; attempt < 5; ++attempt) {
+            fd = socket(AF_INET, SOCK_STREAM, 0);
+            if (fd == INVALID_SOCKET) return false;
+            DWORD timeoutMs = 10000;
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+            setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+            if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) return true;
+            closesocket(fd);
+            fd = INVALID_SOCKET;
+            Sleep(100);
+        }
+        return false;
     }
     bool sendRecv(int code, const std::string& body, int& respCode, std::string& respBody) {
         auto buf = ProtocolEncoder::encode(static_cast<uint32_t>(code), body);
@@ -58,7 +67,20 @@ struct Conn {
         respCode = static_cast<int>(recvCode);
         return true;
     }
-    void close() { if (fd != INVALID_SOCKET) closesocket(fd); }
+    bool sendRecvSuccess(int code, const std::string& body, int expectedCode,
+                         std::string& respBody) {
+        int respCode = 0;
+        if (!sendRecv(code, body, respCode, respBody)) return false;
+        return respCode == expectedCode;
+    }
+    void close() {
+        if (fd != INVALID_SOCKET) {
+            shutdown(fd, SD_BOTH);
+            closesocket(fd);
+            fd = INVALID_SOCKET;
+            Sleep(150);
+        }
+    }
 };
 
 int g_pass = 0, g_fail = 0;
@@ -89,7 +111,7 @@ int main() {
         loginReq["password"] = hashPassword("user1", "123456");  // 密码摘要登录
         bool ok = c.sendRecv(1006, loginReq.dump(), code, body);
         check("登录 user1 -> 2006", ok && code == 2006);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             check("登录成功标志", j["success"].get<bool>());
             userId = j["user_id"];
@@ -118,7 +140,7 @@ int main() {
         loginReq["password"] = hashPassword("admin", "123456");
         bool ok = c.sendRecv(1006, loginReq.dump(), code, body);
         check("登录 admin -> 2006", ok && code == 2006);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             g_adminToken = j.value("token", "");
         }
@@ -132,7 +154,7 @@ int main() {
         int code = 0; std::string body;
         bool ok = c.sendRecv(1001, "{}", code, body);
         check("商品列表 1001 -> 2001", ok && code == 2001);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             productCount = static_cast<int>(j["products"].size());
             check("商品数量为 6", productCount == 6, "实际=" + std::to_string(productCount));
@@ -146,7 +168,7 @@ int main() {
         int code = 0; std::string body;
         bool ok = c.sendRecv(1002, "{\"product_id\":1}", code, body);
         check("商品详情 1002 -> 2002", ok && code == 2002);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             check("详情含名称", j.value("name", "") != "");
         }
@@ -173,7 +195,7 @@ int main() {
         int code = 0; std::string body;
         bool ok = c.sendRecv(1020, "{}", code, body);
         check("促销列表 1020 -> 2020", ok && code == 2020);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             check("促销数量为 6", j["promotions"].size() == 6,
                   "实际=" + std::to_string(j["promotions"].size()));
@@ -188,20 +210,20 @@ int main() {
         // 搜分类"数码" -> 2 条（降噪无线耳机 / 智能手环）
         bool ok = c.sendRecv(1005, "{\"keyword\":\"数码\"}", code, body);
         check("搜索 1005 -> 2005", ok && code == 2005);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             check("搜索'数码'命中2件", j["count"] == 2,
                   "count=" + std::to_string(j["count"].get<int>()));
         }
         // 搜名称"耳机" -> 1 条（降噪无线耳机 id=4）
         ok = c.sendRecv(1005, "{\"keyword\":\"耳机\"}", code, body);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             check("搜索'耳机'命中1件", j["count"] == 1 && j["products"][0]["id"] == 4);
         }
         // 搜不存在的词 -> 0 条
         ok = c.sendRecv(1005, "{\"keyword\":\"不存在的商品xyz\"}", code, body);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             check("搜索无结果返回0件", j["count"] == 0);
         }
@@ -218,7 +240,7 @@ int main() {
         req["promo_ids"] = json::array({2});  // 满200减30
         bool ok = c.sendRecv(1030, req.dump(), code, body);
         check("结算 1030 -> 2030", ok && code == 2030);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             // 299*2 = 598，满200减30 -> 568（user1 非 VIP 无折上折）
             double final = j["final"];
@@ -327,7 +349,7 @@ int main() {
         json req = withAuth({{"user_id", userId}});
         bool ok = c.sendRecv(1040, req.dump(), code, body);
         check("订单查询 1040 -> 2040", ok && code == 2040);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             check("订单列表非空", j["orders"].size() >= 1);
             if (j["orders"].size() >= 1) {
@@ -361,7 +383,7 @@ int main() {
         json req = withAuth({{"user_id", userId}, {"order_id", targetOrderId}, {"reason", "测试退货"}});
         bool ok = c.sendRecv(1050, req.dump(), code, body);
         check("退货申请 1050 -> 2050", ok && code == 2050);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             returnId = j.value("return_id", 0);
             check("返回退货单号", returnId > 0);
@@ -381,7 +403,7 @@ int main() {
         json req = withAuth({{"user_id", userId}});
         bool ok = c.sendRecv(1070, req.dump(), code, body);
         check("退货进度 1070 -> 2070", ok && code == 2070);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             check("退货列表含刚提交的单", j["returns"].size() >= 1 &&
                   j["returns"][0]["return_id"] == returnId);
@@ -409,7 +431,7 @@ int main() {
         req2["token"] = g_adminToken;
         ok = c2.sendRecv(1080, req2.dump(), code, body);
         check("admin 审核通过 1080 -> 2080", ok && code == 2080);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             check("审核通过提示库存回补", j["message"].get<std::string>().find("回补") != std::string::npos);
         }
@@ -462,7 +484,7 @@ int main() {
         json req = withAuth({{"days", 0}, {"product_id", 0}, {"user_id", 0}});
         bool ok = c.sendRecv(1060, req.dump(), code, body);
         check("销售统计 1060 -> 2060", ok && code == 2060);
-        if (ok) {
+        if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
             int orderCount = j["summary"]["order_count"];
             double finalAmount = j["summary"]["final_amount"];
@@ -498,5 +520,59 @@ int main() {
 
     std::cout << "\n========== 测试结果 ==========" << std::endl;
     std::cout << "通过: " << g_pass << "  失败: " << g_fail << std::endl;
+    // New feature smoke tests: explainable promotions, group buying, and audit logs.
+    {
+        Conn c; c.connect();
+        int code = 0; std::string body;
+        json explain = withAuth({{"user_id", userId},
+            {"items", json::array({{{"product_id", 1}, {"quantity", 2}}})},
+            {"promo_ids", json::array({5, 2})}});
+        bool ok = c.sendRecv(1090, explain.dump(), code, body);
+        check("智能促销解释 1090 -> 2090", ok && code == 2090);
+        if (ok && code == 2090) {
+            auto j = json::parse(body);
+            check("返回当前与最优方案", j.contains("current") && j.contains("best"));
+            check("返回方案差价", j.value("saving_vs_current", -1) >= 0);
+            check("返回商品明细解释", j.contains("lines") && j["lines"].size() == 1);
+        }
+
+        json create = withAuth({{"user_id", userId}, {"product_id", 2},
+                                {"target_count", 2}, {"hours", 1}});
+        ok = c.sendRecv(1091, create.dump(), code, body);
+        check("创建拼团 1091 -> 2091", ok && code == 2091);
+        int groupId = 0;
+        if (ok && code == 2091) groupId = json::parse(body).value("group_id", 0);
+        c.close();
+
+        Conn c2; c2.connect();
+        json login2 = {{"username", "user2"}, {"password", hashPassword("user2", "123456")}};
+        ok = c2.sendRecv(1006, login2.dump(), code, body);
+        std::string user2Token;
+        if (ok && code == 2006) user2Token = json::parse(body).value("token", "");
+        json join = {{"user_id", 3}, {"group_id", groupId}, {"token", user2Token}};
+        ok = c2.sendRecv(1092, join.dump(), code, body);
+        check("加入拼团 1092 -> 2092", ok && code == 2092);
+        if (ok && code == 2092) check("拼团达到目标人数", json::parse(body).value("status", 0) == 1);
+        Conn c3; c3.connect();
+        json query = withAuth({{"user_id", userId}});
+        ok = c3.sendRecv(1093, query.dump(), code, body);
+        check("查询拼团 1093 -> 2093", ok && code == 2093, std::to_string(code) + " " + body);
+        int auditOrderId = 0;
+        json orderQuery = withAuth({{"user_id", userId}});
+        ok = c3.sendRecv(1040, orderQuery.dump(), code, body);
+        if (ok && code == 2040 && !json::parse(body)["orders"].empty()) {
+            auditOrderId = json::parse(body)["orders"][0].value("order_id", 0);
+        }
+        json audit = withAuth({{"user_id", userId}, {"order_id", auditOrderId}});
+        ok = c3.sendRecv(1096, audit.dump(), code, body);
+        check("查询订单审计 1096 -> 2096", ok && code == 2096, std::to_string(code) + " " + body);
+        if (ok && code == 2096) check("审计记录非空", json::parse(body)["audit"].size() >= 1);
+        c3.close();
+        c2.close();
+        Sleep(500);
+    }
+
+    std::cout << "\n========== FINAL TEST RESULT ==========" << std::endl;
+    std::cout << "passed: " << g_pass << " failed: " << g_fail << std::endl;
     return g_fail == 0 ? 0 : 1;
 }

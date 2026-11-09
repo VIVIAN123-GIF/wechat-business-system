@@ -2,11 +2,11 @@
 -- 微商系统 初始测试数据
 -- ============================================================
 
--- 用户（密码为 SHA-256 摘要：SHA256("微商系统$"||username||"#"||明文)，如 admin/123456）
+-- 用户密码为 SHA-256 摘要；演示账号使用非默认强口令。
 INSERT INTO users (username, password, real_name, phone, level) VALUES
-('admin',  'dc418dfab756bb296d4321794b0efb83a2e16e88f7993d56b0275d7584360e48', '管理员', '13800000001', 2),
-('user1',  'f05a586acaf92ba19842a273e8575ee488a51afe6805ce4cd05f870ace653c13', '测试用户一', '13800000002', 1),
-('user2',  '64b0be14f1b823064be688353ad0bfe44fb30e9baf455c2233c1bb4bcdf0d47c', '测试用户二', '13800000003', 1);
+('admin',  '73f8b74dabf09b8a20de224389821f72bcb7682c10cf9be567b90523376924b1', '管理员', '13800000001', 2),
+('user1',  '7d6826579572e737e7786df480660bd4ed20736575f20c437582c47639dbef86', '测试用户一', '13800000002', 1),
+('user2',  '28559c76d6c2a13c45eeff87c2fb980d6e37660be97fd09b8ca55f0073f40d8e', '测试用户二', '13800000003', 1);
 
 -- 商品（价格单位：分；含"限量款"库存=1，用于演示互斥防超卖）
 INSERT INTO products (name, price, stock, description, category) VALUES

@@ -31,8 +31,13 @@ qt_client_release/
 
 # Local integration/feature run scratch dirs
 .debug-integration/
+.debug-*/
+.verify-*/
 .feature-run*/
 .integration-*/
+
+# Local build/audit scratch dirs
+build-*/
 
 # Archives / packaged releases (source is tracked, binaries are not)
 *.zip

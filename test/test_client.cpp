@@ -25,10 +25,12 @@ using json = nlohmann::json;
 // 已登录会话 token（鉴权）
 std::string g_token;
 std::string g_adminToken;
+int g_addressId = 0;
 
 // 统一在请求中注入会话 token
 json withAuth(json req) {
     if (!g_token.empty()) req["token"] = g_token;
+    if (g_addressId > 0 && !req.contains("address_id")) req["address_id"] = g_addressId;
     return req;
 }
 
@@ -89,6 +91,19 @@ void check(const std::string& name, bool ok, const std::string& detail = "") {
     else { std::cout << "[FAIL] " << name << (detail.empty() ? "" : " | " + detail) << std::endl; ++g_fail; }
 }
 
+bool payCreatedOrder(Conn& c, int userId, int& code, std::string& body) {
+    try {
+        std::string createBody = body;
+        int orderId = json::parse(body).value("order_id", 0);
+        if (orderId <= 0) return false;
+        json pay = withAuth({{"user_id", userId}, {"order_id", orderId}});
+        std::string payBody;
+        bool paid = c.sendRecv(1100, pay.dump(), code, payBody) && code == 2100;
+        if (paid) body = createBody; else body = payBody;
+        return paid;
+    } catch (...) { return false; }
+}
+
 int main() {
     std::cout << "========== 微商系统集成测试 ==========" << std::endl;
 
@@ -108,7 +123,7 @@ int main() {
         int code = 0; std::string body;
         json loginReq;
         loginReq["username"] = "user1";
-        loginReq["password"] = hashPassword("user1", "123456");  // 密码摘要登录
+        loginReq["password"] = hashPassword("user1", "User1#2026!");  // 密码摘要登录
         bool ok = c.sendRecv(1006, loginReq.dump(), code, body);
         check("登录 user1 -> 2006", ok && code == 2006);
         if (ok && code >= 2000 && code < 3000) {
@@ -137,7 +152,7 @@ int main() {
         int code = 0; std::string body;
         json loginReq;
         loginReq["username"] = "admin";
-        loginReq["password"] = hashPassword("admin", "123456");
+        loginReq["password"] = hashPassword("admin", "Admin#2026!");
         bool ok = c.sendRecv(1006, loginReq.dump(), code, body);
         check("登录 admin -> 2006", ok && code == 2006);
         if (ok && code >= 2000 && code < 3000) {
@@ -148,6 +163,15 @@ int main() {
     }
 
     // 3. 商品列表
+    {
+        Conn c; c.connect();
+        int code = 0; std::string body;
+        json req = withAuth({{"user_id", userId}, {"receiver_name", "test receiver"}, {"phone", "13800000000"}, {"detail", "test address"}, {"is_default", true}});
+        if (c.sendRecv(1121, req.dump(), code, body) && code == 2121) g_addressId = json::parse(body).value("address_id", 0);
+        check("创建测试收货地址", g_addressId > 0);
+        c.close();
+    }
+
     int productCount = 0;
     {
         Conn c; c.connect();
@@ -239,6 +263,8 @@ int main() {
         req["items"] = json::array({ {{"product_id", 1}, {"quantity", 2}} });
         req["promo_ids"] = json::array({2});  // 满200减30
         bool ok = c.sendRecv(1030, req.dump(), code, body);
+        bool paid = ok && code == 2030 && payCreatedOrder(c, userId, code, body);
+        if (paid) { code = 2030; }
         check("结算 1030 -> 2030", ok && code == 2030);
         if (ok && code >= 2000 && code < 3000) {
             auto j = json::parse(body);
@@ -268,6 +294,8 @@ int main() {
         req2["items"] = json::array({ {{"product_id", 3}, {"quantity", 1}} });
         req2["promo_ids"] = json::array({1, 1});  // 重复选两次全场9折
         ok = c.sendRecv(1030, req2.dump(), code, body);
+        bool paidDuplicate = ok && code == 2030 && payCreatedOrder(c, userId, code, body);
+        if (paidDuplicate) { code = 2030; }
         check("重复促销自动去重不报错", ok && code == 2030);
         c.close();
     }
@@ -284,6 +312,8 @@ int main() {
         reqA["items"] = json::array({ {{"product_id", 1}, {"quantity", 2}} });
         reqA["promo_ids"] = json::array({5});
         bool okA = c.sendRecv(1030, reqA.dump(), code, body);
+        bool paidA = okA && code == 2030 && payCreatedOrder(c, userId, code, body);
+        if (paidA) { code = 2030; }
         check("阶梯折扣 第2件9折 1030 -> 2030", okA && code == 2030);
         if (okA) {
             auto j = json::parse(body);
@@ -301,6 +331,8 @@ int main() {
         reqB["items"] = json::array({ {{"product_id", 1}, {"quantity", 3}} });
         reqB["promo_ids"] = json::array({6});
         bool okB = c.sendRecv(1030, reqB.dump(), code, body);
+        bool paidB = okB && code == 2030 && payCreatedOrder(c, userId, code, body);
+        if (paidB) { code = 2030; }
         check("阶梯折扣 第3件免单 1030 -> 2030", okB && code == 2030);
         if (okB) {
             auto j = json::parse(body);
@@ -315,6 +347,8 @@ int main() {
         reqC["items"] = json::array({ {{"product_id", 1}, {"quantity", 2}} });
         reqC["promo_ids"] = json::array({5, 2});
         bool okC = c.sendRecv(1030, reqC.dump(), code, body);
+        bool paidC = okC && code == 2030 && payCreatedOrder(c, userId, code, body);
+        if (paidC) { code = 2030; }
         check("混合链 第2件9折+满200减30 1030 -> 2030", okC && code == 2030);
         if (okC) {
             auto j = json::parse(body);
@@ -331,6 +365,8 @@ int main() {
         reqD["items"] = json::array({ {{"product_id", 2}, {"quantity", 4}} });
         reqD["promo_ids"] = json::array({5});
         bool okD = c.sendRecv(1030, reqD.dump(), code, body);
+        bool paidD = okD && code == 2030 && payCreatedOrder(c, userId, code, body);
+        if (paidD) { code = 2030; }
         check("阶梯折扣 超出最高档 1030 -> 2030", okD && code == 2030);
         if (okD) {
             auto j = json::parse(body);
@@ -379,6 +415,20 @@ int main() {
             }
         }
         check("找到可退货订单", targetOrderId > 0);
+
+        // 退货窗口从买家签收时间计算：先由管理员发货，再由买家确认收货。
+        if (targetOrderId > 0) {
+            Conn adminConn; adminConn.connect();
+            json shipReq = {{"user_id", 1}, {"order_id", targetOrderId},
+                            {"status", ORDER_SHIPPED}, {"token", g_adminToken}};
+            bool shipped = adminConn.sendRecv(1095, shipReq.dump(), code, body) && code == 2095;
+            check("管理员发货后可确认收货", shipped);
+            adminConn.close();
+
+            json receiveReq = withAuth({{"user_id", userId}, {"order_id", targetOrderId}});
+            bool received = c.sendRecv(1110, receiveReq.dump(), code, body) && code == 2110;
+            check("买家确认收货", received);
+        }
 
         json req = withAuth({{"user_id", userId}, {"order_id", targetOrderId}, {"reason", "测试退货"}});
         bool ok = c.sendRecv(1050, req.dump(), code, body);
@@ -444,6 +494,14 @@ int main() {
 
     // 9. 并发防超卖（限量款背包 stock=1，8 线程同时抢购）
     {
+        {
+            Conn setup; setup.connect();
+            int setupCode = 0; std::string setupBody;
+            json stockReq = {{"user_id", 1}, {"product_id", 6}, {"action", "stock"}, {"value", 1}, {"token", g_adminToken}};
+            setup.sendRecv(1190, stockReq.dump(), setupCode, setupBody);
+            check("并发测试初始化库存", setupCode == 2190);
+            setup.close();
+        }
         std::atomic<int> successCount{0}, failCount{0};
         std::vector<std::thread> threads;
         for (int i = 0; i < 8; ++i) {
@@ -454,20 +512,18 @@ int main() {
                 // 登录 admin（取会话 token）
                 json loginReq;
                 loginReq["username"] = "admin";
-                loginReq["password"] = hashPassword("admin", "123456");
+                loginReq["password"] = hashPassword("admin", "Admin#2026!");
                 c.sendRecv(1006, loginReq.dump(), code, body);
                 std::string token;
                 try { token = json::parse(body).value("token", ""); } catch (...) {}
                 json req;
-                req["user_id"] = 1;
+                req["user_id"] = userId;
                 req["items"] = json::array({ {{"product_id", 6}, {"quantity", 1}} });
                 req["promo_ids"] = json::array();
-                req["token"] = token;
-                if (c.sendRecv(1030, req.dump(), code, body) && code == 2030) {
-                    ++successCount;
-                } else {
-                    ++failCount;
-                }
+                req["address_id"] = g_addressId;
+                req["token"] = g_token;
+                if (c.sendRecv(1030, req.dump(), code, body) && code == 2030 && payCreatedOrder(c, userId, code, body)) ++successCount;
+                else { ++failCount; std::cerr << "concurrent request failed: code=" << code << " body=" << body << std::endl; }
                 c.close();
             });
         }
@@ -545,7 +601,7 @@ int main() {
         c.close();
 
         Conn c2; c2.connect();
-        json login2 = {{"username", "user2"}, {"password", hashPassword("user2", "123456")}};
+        json login2 = {{"username", "user2"}, {"password", hashPassword("user2", "User2#2026!")}};
         ok = c2.sendRecv(1006, login2.dump(), code, body);
         std::string user2Token;
         if (ok && code == 2006) user2Token = json::parse(body).value("token", "");
@@ -553,10 +609,12 @@ int main() {
         ok = c2.sendRecv(1092, join.dump(), code, body);
         check("加入拼团 1092 -> 2092", ok && code == 2092);
         if (ok && code == 2092) check("拼团达到目标人数", json::parse(body).value("status", 0) == 1);
-        Conn c3; c3.connect();
+        c2.close();
+        Sleep(500);
+        Conn c3; bool c3Connected = c3.connect();
         json query = withAuth({{"user_id", userId}});
         ok = c3.sendRecv(1093, query.dump(), code, body);
-        check("查询拼团 1093 -> 2093", ok && code == 2093, std::to_string(code) + " " + body);
+        check("查询拼团 1093 -> 2093", c3Connected && ok && code == 2093, std::to_string(code) + " " + body);
         int auditOrderId = 0;
         json orderQuery = withAuth({{"user_id", userId}});
         ok = c3.sendRecv(1040, orderQuery.dump(), code, body);
@@ -568,7 +626,6 @@ int main() {
         check("查询订单审计 1096 -> 2096", ok && code == 2096, std::to_string(code) + " " + body);
         if (ok && code == 2096) check("审计记录非空", json::parse(body)["audit"].size() >= 1);
         c3.close();
-        c2.close();
         Sleep(500);
     }
 

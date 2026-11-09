@@ -16,6 +16,7 @@ Copy-Item $ServerExe $serverPath -Force
 Copy-Item $TestExe $testPath -Force
 
 $server = $null
+$serverStarted = $false
 $exitCode = 1
 try {
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -29,6 +30,7 @@ try {
     $server = New-Object System.Diagnostics.Process
     $server.StartInfo = $startInfo
     [void]$server.Start()
+    $serverStarted = $true
     Start-Sleep -Seconds 2
 
     if ($server.HasExited) {
@@ -39,7 +41,7 @@ try {
     $exitCode = $LASTEXITCODE
 }
 finally {
-    if ($null -ne $server -and -not $server.HasExited) {
+    if ($serverStarted -and $null -ne $server -and -not $server.HasExited) {
         $server.StandardInput.WriteLine("q")
         $server.StandardInput.Close()
         if (-not $server.WaitForExit(5000)) {

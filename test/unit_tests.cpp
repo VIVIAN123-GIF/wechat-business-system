@@ -37,8 +37,8 @@ int main() {
     CHECK_EQ_INT(Sha256::hex("abc").compare("ba7816bf8f01cfea414140de5dae2223"
         "b00361a396177a9cb410ff61f20015ad"), 0);
     // 课设密码摘要规则
-    CHECK_EQ_INT(hashPassword("admin", "123456").compare(
-        "dc418dfab756bb296d4321794b0efb83a2e16e88f7993d56b0275d7584360e48"), 0);
+    CHECK_EQ_INT(hashPassword("admin", "Admin#2026!").compare(
+        "73f8b74dabf09b8a20de224389821f72bcb7682c10cf9be567b90523376924b1"), 0);
 
     // ---------- 2. 金额分转换（round 精确） ----------
     std::cout << "\n--- Money::toCents ---\n";

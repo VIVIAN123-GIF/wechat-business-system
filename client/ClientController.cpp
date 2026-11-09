@@ -313,9 +313,60 @@ void ClientController::handleCheckout() {
         }
     }
 
-    json req = json::parse(cart_.itemsToJson());
+    int addressId = 0;
+    std::vector<json> addresses;
+    json addressReq;
+    addressReq["user_id"] = userId_;
+    if (!sendAndRecv(ProtocolConstants::C_REQ_ADDRESS_LIST, addressReq.dump(), respCode, respBody)) return;
+    try {
+        auto addressResponse = json::parse(respBody);
+        if (addressResponse.contains("addresses") && addressResponse["addresses"].is_array()) {
+            for (const auto& address : addressResponse["addresses"]) addresses.push_back(address);
+        }
+    } catch (...) {
+        renderer_->drawMessage("收货地址解析失败", true);
+        return;
+    }
+
+    if (addresses.empty()) {
+        renderer_->drawMessage("暂无收货地址，请先创建地址");
+        std::string receiver, phone, detail;
+        std::cout << "收货人（输入0取消）: "; std::getline(std::cin, receiver);
+        if (receiver == "0" || receiver.empty()) return;
+        std::cout << "联系电话: "; std::getline(std::cin, phone);
+        std::cout << "详细地址: "; std::getline(std::cin, detail);
+        json createReq = {{"user_id", userId_}, {"receiver_name", receiver},
+                          {"phone", phone}, {"detail", detail}, {"is_default", true}};
+        if (!sendAndRecv(ProtocolConstants::C_REQ_ADDRESS_CREATE, createReq.dump(), respCode, respBody)) return;
+        try {
+            addressId = json::parse(respBody).value("address_id", 0);
+        } catch (...) {
+            renderer_->drawMessage("收货地址保存响应解析失败", true);
+            return;
+        }
+    } else {
+        std::cout << "\n可用收货地址：\n";
+        for (size_t i = 0; i < addresses.size(); ++i) {
+            const auto& address = addresses[i];
+            std::cout << (i + 1) << ". " << address.value("receiver_name", "")
+                      << " " << address.value("phone", "") << " "
+                      << address.value("detail", "")
+                      << (address.value("is_default", false) ? " [默认]" : "") << "\n";
+        }
+        int choice = getUserInputInt("请选择地址（0取消）: ", 0, static_cast<int>(addresses.size()));
+        if (choice == 0) return;
+        addressId = addresses[static_cast<size_t>(choice - 1)].value("id", 0);
+    }
+    if (addressId <= 0) {
+        renderer_->drawMessage("收货地址无效，无法结算", true);
+        return;
+    }
+
+    json req;
     req["user_id"] = userId_;
     req["promo_ids"] = promoIds;
+    req["items"] = json::parse(cart_.itemsToJson());
+    req["address_id"] = addressId;
     if (sendAndRecv(ProtocolConstants::C_REQ_CHECKOUT, req.dump(), respCode, respBody)) {
         try {
             auto j = json::parse(respBody);
@@ -397,7 +448,7 @@ void ClientController::handleMyReturns() {
         std::cout << "\n====== 我的退货进度 ======\n";
         std::cout << padR("退货ID", 8) << padR("订单ID", 8) << padR("状态", 10)
                   << padR("申请时间", 20) << "原因\n";
-        const char* st[] = {"待审核", "已通过", "已拒绝"};
+        const char* st[] = {"待审核", "已通过", "已拒绝", "已完成", "已完成"};
         for (auto& r : j["returns"]) {
             std::cout << padL(std::to_string(r["return_id"].get<int>()), 8)
                       << padL(std::to_string(r["order_id"].get<int>()), 8)
@@ -419,7 +470,7 @@ void ClientController::handleAuditReturns() {
         std::cout << "\n====== 退货审核（管理员）======\n";
         std::cout << padR("退货ID", 8) << padR("订单ID", 8) << padR("用户", 8)
                   << padR("状态", 10) << "原因\n";
-        const char* st[] = {"待审核", "已通过", "已拒绝"};
+        const char* st[] = {"待审核", "已通过", "已拒绝", "已完成", "已完成"};
         for (auto& r : j["returns"]) {
             std::cout << padL(std::to_string(r["return_id"].get<int>()), 8)
                       << padL(std::to_string(r["order_id"].get<int>()), 8)

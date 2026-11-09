@@ -19,6 +19,10 @@ add_executable(qt_client WIN32
     pages/CartPage.h pages/CartPage.cpp
     pages/CheckoutPage.h pages/CheckoutPage.cpp
     pages/OrderPage.h pages/OrderPage.cpp
+    pages/CouponPage.h pages/CouponPage.cpp
+    pages/NotificationPage.h pages/NotificationPage.cpp
+    pages/FavoritesPage.h pages/FavoritesPage.cpp
+    pages/AdminPage.h pages/AdminPage.cpp
     pages/ReturnPage.h pages/ReturnPage.cpp
     pages/StatsPage.h pages/StatsPage.cpp
     pages/ServicePage.h pages/ServicePage.cpp

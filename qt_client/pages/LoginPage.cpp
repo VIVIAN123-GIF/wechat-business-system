@@ -26,7 +26,7 @@ LoginPage::LoginPage(ApiClient* api, QWidget* parent)
     userEdit_ = new QLineEdit;
     userEdit_->setPlaceholderText("admin");
     pwdEdit_ = new QLineEdit;
-    pwdEdit_->setPlaceholderText("123456");
+    pwdEdit_->setPlaceholderText("请输入密码");
     pwdEdit_->setEchoMode(QLineEdit::Password);
     form->addRow(QStringLiteral("用户名："), userEdit_);
     form->addRow(QStringLiteral("密码："), pwdEdit_);

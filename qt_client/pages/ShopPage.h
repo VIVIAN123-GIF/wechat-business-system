@@ -9,6 +9,7 @@ class QTableWidget;
 class QLineEdit;
 class QLabel;
 class QSpinBox;
+class QComboBox;
 class QPushButton;
 class ApiClient;
 
@@ -27,12 +28,20 @@ private:
     QLabel* dStock_;
     QLabel* dCat_;
     QLabel* dDesc_;
+    QLabel* dReviews_;
     QSpinBox* qtySpin_;
+    QSpinBox* minPriceSpin_;
+    QSpinBox* maxPriceSpin_;
+    QComboBox* sortBox_;
+    QComboBox* skuBox_;
     QPushButton* addBtn_;
 
     int currentPid_ = 0;
     int currentStock_ = 0;
+    int currentProductStock_ = 0;
     int currentPrice_ = 0;
+    int currentSkuId_ = 0;
+    int currentSkuPrice_ = 0;
     QString currentName_;
 
     void loadProducts(const nlohmann::json& j);

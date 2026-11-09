@@ -35,6 +35,8 @@ inline QString returnStatusText(int s) {
         case 0: return QStringLiteral("待审核");
         case 1: return QStringLiteral("已通过");
         case 2: return QStringLiteral("已拒绝");
+        case 3: return QStringLiteral("已拒绝");
+        case 4: return QStringLiteral("已完成");
         default: return QStringLiteral("未知");
     }
 }

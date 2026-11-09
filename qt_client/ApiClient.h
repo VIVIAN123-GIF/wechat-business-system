@@ -16,6 +16,8 @@ using json = nlohmann::json;
 // 本地购物车一行
 struct CartLine {
     int productId = 0;
+    int skuId = 0;
+    QString skuLabel;
     QString name;
     int priceCents = 0;
     int quantity = 0;
@@ -36,7 +38,7 @@ public:
 
     // ---- 本地购物车 ----
     const std::vector<CartLine>& cart() const { return cart_; }
-    void cartAdd(int pid, const QString& name, int priceCents, int qty);
+    void cartAdd(int pid, const QString& name, int priceCents, int qty, int skuId = 0, const QString& skuLabel = {});
     void cartRemove(int pid);
     void cartSetQty(int pid, int qty);
     void cartClear();
@@ -54,12 +56,34 @@ public:
     void fetchProducts(Cb cb);
     void fetchDetail(int pid, Cb cb);
     void search(const QString& keyword, Cb cb);
+    void search(const QString& keyword, int minPrice, int maxPrice, const QString& category, const QString& sort, Cb cb);
 
     // ---- 加购 / 促销 / 结算 ----
     void addToCart(int pid, int qty, Cb cb);
     void fetchPromotions(Cb cb);
     void explainPromotions(const std::vector<int>& promoIds, Cb cb);
-    void checkout(const std::vector<int>& promoIds, Cb cb);
+    void checkout(const std::vector<int>& promoIds, int addressId, Cb cb);
+    void checkout(const std::vector<int>& promoIds, int addressId, int couponId, Cb cb);
+    void fetchCoupons(Cb cb);
+    void claimCoupon(int promotionId, Cb cb);
+    void fetchNotifications(Cb cb);
+    void markNotificationRead(int notificationId, Cb cb);
+    void fetchAddresses(Cb cb);
+    void createAddress(const QString& receiver, const QString& phone, const QString& detail, bool isDefault, Cb cb);
+    void payOrder(int orderId, Cb cb);
+    void cancelOrder(int orderId, Cb cb);
+    void confirmReceipt(int orderId, Cb cb);
+    void createReview(int orderId, int productId, int rating, const QString& content, Cb cb);
+    void createReview(int orderId, int productId, int rating, const QString& content, const QString& imageUrl, Cb cb);
+    void fetchReviews(int productId, Cb cb);
+    void fetchSkus(int productId, Cb cb);
+    void toggleFavorite(int productId, Cb cb);
+    void fetchFavorites(Cb cb);
+    void checkIn(Cb cb);
+    void fetchShipment(int orderId, Cb cb);
+    void saveShipment(int orderId, const QString& trackingNo, int status, Cb cb);
+    void updateProduct(int productId, const QString& action, int value, Cb cb);
+    void updateOrderStatus(int orderId, int status, Cb cb);
 
     void createGroup(int productId, int targetCount, int hours, Cb cb);
     void joinGroup(int groupId, Cb cb);
@@ -71,6 +95,7 @@ public:
     void applyReturn(int orderId, const QString& reason, Cb cb);
     void fetchReturns(Cb cb);
     void auditReturn(int returnId, bool approve, Cb cb);
+    void completeReturn(int returnId, Cb cb);
 
     // ---- 统计 / 客服 ----
     void fetchStats(int days, int productId, int userId, Cb cb);

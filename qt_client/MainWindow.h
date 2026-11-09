@@ -16,6 +16,10 @@ class OrderPage;
 class ReturnPage;
 class StatsPage;
 class ServicePage;
+class CouponPage;
+class NotificationPage;
+class FavoritesPage;
+class AdminPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -36,6 +40,10 @@ private:
     ReturnPage*   returnPage_;
     StatsPage*    statsPage_;
     ServicePage*  servicePage_;
+    CouponPage* couponPage_;
+    NotificationPage* notificationPage_;
+    FavoritesPage* favoritesPage_;
+    AdminPage* adminPage_;
 
     void buildMainUi();
     void onLogin();

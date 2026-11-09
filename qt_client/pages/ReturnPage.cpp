@@ -73,18 +73,26 @@ void ReturnPage::load() {
             table_->setItem(row, 5, new QTableWidgetItem(
                 QString::fromStdString(r.value("apply_time", ""))));
 
-            if (admin && status == 0) {
+            if (admin && (status == 0 || status == 1)) {
                 auto* w = new QWidget;
                 auto* hl = new QHBoxLayout(w);
                 hl->setContentsMargins(2, 2, 2, 2);
                 auto* okBtn = new QPushButton(QStringLiteral("通过"));
-                auto* noBtn = new QPushButton(QStringLiteral("拒绝"));
-                hl->addWidget(okBtn); hl->addWidget(noBtn);
+                auto* noBtn = status == 0 ? new QPushButton(QStringLiteral("拒绝")) : nullptr;
+                if (status == 0) hl->addWidget(noBtn);
+                else okBtn->setText(QStringLiteral("完成退货"));
                 table_->setCellWidget(row, 6, w);
 
                 int rid = r.value("return_id", 0);
                 connect(okBtn, &QPushButton::clicked, this,
-                        [this, rid]{
+                        [this, rid, status]{
+                    if (status == 1) {
+                        api_->completeReturn(rid, [this](quint32 c, const json& x){
+                            tipLabel_->setText(c == 2081 ? QString::fromStdString(x.value("message", "处理成功")) : errMsg(x));
+                            load();
+                        });
+                        return;
+                    }
                     api_->auditReturn(rid, true, [this](quint32 c, const json& x){
                         tipLabel_->setText(c == 2080
                             ? QString::fromStdString(x.value("message", "处理成功"))
@@ -92,7 +100,7 @@ void ReturnPage::load() {
                         load();
                     });
                 });
-                connect(noBtn, &QPushButton::clicked, this, [this, rid]{
+                if (noBtn) connect(noBtn, &QPushButton::clicked, this, [this, rid]{
                     api_->auditReturn(rid, false, [this](quint32 c, const json& x){
                         tipLabel_->setText(c == 2080
                             ? QString::fromStdString(x.value("message", "处理成功"))

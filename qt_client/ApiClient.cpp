@@ -74,8 +74,16 @@ void ApiClient::fetchDetail(int pid, Cb cb) {
 }
 
 void ApiClient::search(const QString& keyword, Cb cb) {
+    search(keyword, 0, 0, {}, {}, cb);
+}
+
+void ApiClient::search(const QString& keyword, int minPrice, int maxPrice, const QString& category, const QString& sort, Cb cb) {
     json j;
     j["keyword"] = keyword.toStdString();
+    if (minPrice > 0) j["min_price"] = minPrice;
+    if (maxPrice > 0) j["max_price"] = maxPrice;
+    if (!category.trimmed().isEmpty()) j["category"] = category.toStdString();
+    if (!sort.isEmpty()) j["sort"] = sort.toStdString();
     send(1005, j, cb);
 }
 
@@ -98,13 +106,17 @@ void ApiClient::explainPromotions(const std::vector<int>& promoIds, Cb cb) {
     j["promo_ids"] = promoIds;
     json items = json::array();
     for (const auto& line : cart_) {
-        items.push_back({{"product_id", line.productId}, {"quantity", line.quantity}});
+        items.push_back({{"product_id", line.productId}, {"quantity", line.quantity}, {"sku_id", line.skuId}});
     }
     j["items"] = items;
     send(1090, j, cb);
 }
 
-void ApiClient::checkout(const std::vector<int>& promoIds, Cb cb) {
+void ApiClient::checkout(const std::vector<int>& promoIds, int addressId, Cb cb) {
+    checkout(promoIds, addressId, 0, cb);
+}
+
+void ApiClient::checkout(const std::vector<int>& promoIds, int addressId, int couponId, Cb cb) {
     json j;
     j["user_id"] = userId_;
     json items = json::array();
@@ -112,12 +124,50 @@ void ApiClient::checkout(const std::vector<int>& promoIds, Cb cb) {
         json it;
         it["product_id"] = line.productId;
         it["quantity"] = line.quantity;
+        if (line.skuId > 0) it["sku_id"] = line.skuId;
         items.push_back(it);
     }
     j["items"] = items;
     j["promo_ids"] = promoIds;
+    j["address_id"] = addressId;
+    if (couponId > 0) j["coupon_id"] = couponId;
     send(1030, j, cb);
 }
+
+void ApiClient::fetchCoupons(Cb cb) { send(1140, {{"user_id", userId_}}, cb); }
+void ApiClient::claimCoupon(int promotionId, Cb cb) { send(1141, {{"user_id", userId_}, {"promotion_id", promotionId}}, cb); }
+void ApiClient::fetchNotifications(Cb cb) { send(1150, {{"user_id", userId_}}, cb); }
+void ApiClient::markNotificationRead(int notificationId, Cb cb) { send(1151, {{"user_id", userId_}, {"notification_id", notificationId}}, cb); }
+
+void ApiClient::fetchAddresses(Cb cb) { send(1120, {{"user_id", userId_}}, cb); }
+
+void ApiClient::createAddress(const QString& receiver, const QString& phone, const QString& detail, bool isDefault, Cb cb) {
+    send(1121, {{"user_id", userId_}, {"receiver_name", receiver.toStdString()}, {"phone", phone.toStdString()}, {"detail", detail.toStdString()}, {"is_default", isDefault}}, cb);
+}
+
+void ApiClient::payOrder(int orderId, Cb cb) { send(1100, {{"user_id", userId_}, {"order_id", orderId}}, cb); }
+
+void ApiClient::cancelOrder(int orderId, Cb cb) { send(1101, {{"user_id", userId_}, {"order_id", orderId}}, cb); }
+
+void ApiClient::confirmReceipt(int orderId, Cb cb) { send(1110, {{"user_id", userId_}, {"order_id", orderId}}, cb); }
+
+void ApiClient::createReview(int orderId, int productId, int rating, const QString& content, Cb cb) {
+    createReview(orderId, productId, rating, content, QString(), cb);
+}
+
+void ApiClient::createReview(int orderId, int productId, int rating, const QString& content, const QString& imageUrl, Cb cb) {
+    send(1130, {{"user_id", userId_}, {"order_id", orderId}, {"product_id", productId}, {"rating", rating}, {"content", content.toStdString()}, {"image_url", imageUrl.toStdString()}}, cb);
+}
+
+void ApiClient::fetchReviews(int productId, Cb cb) { send(1131, {{"product_id", productId}}, cb); }
+void ApiClient::fetchSkus(int productId, Cb cb) { send(1200, {{"product_id", productId}}, cb); }
+void ApiClient::toggleFavorite(int productId, Cb cb) { send(1161, {{"user_id", userId_}, {"product_id", productId}}, cb); }
+void ApiClient::fetchFavorites(Cb cb) { send(1160, {{"user_id", userId_}}, cb); }
+void ApiClient::checkIn(Cb cb) { send(1170, {{"user_id", userId_}}, cb); }
+void ApiClient::fetchShipment(int orderId, Cb cb) { send(1180, {{"user_id", userId_}, {"order_id", orderId}}, cb); }
+void ApiClient::saveShipment(int orderId, const QString& trackingNo, int status, Cb cb) { send(1181, {{"user_id", userId_}, {"order_id", orderId}, {"tracking_no", trackingNo.toStdString()}, {"status", status}}, cb); }
+void ApiClient::updateProduct(int productId, const QString& action, int value, Cb cb) { send(1190, {{"user_id", userId_}, {"product_id", productId}, {"action", action.toStdString()}, {"value", value}}, cb); }
+void ApiClient::updateOrderStatus(int orderId, int status, Cb cb) { send(1095, {{"user_id", userId_}, {"order_id", orderId}, {"status", status}}, cb); }
 
 void ApiClient::createGroup(int productId, int targetCount, int hours, Cb cb) {
     send(1091, {{"user_id", userId_}, {"product_id", productId},
@@ -182,14 +232,18 @@ void ApiClient::sendService(const QString& content, Cb cb) {
 }
 
 // ---------------- 本地购物车 ----------------
-void ApiClient::cartAdd(int pid, const QString& name, int priceCents, int qty) {
+void ApiClient::cartAdd(int pid, const QString& name, int priceCents, int qty, int skuId, const QString& skuLabel) {
     for (auto& line : cart_) {
-        if (line.productId == pid) {
+        if (line.productId == pid && line.skuId == skuId) {
             line.quantity += qty;
             return;
         }
     }
-    cart_.push_back(CartLine{pid, name, priceCents, qty});
+    cart_.push_back(CartLine{pid, skuId, skuLabel, name, priceCents, qty});
+}
+
+void ApiClient::completeReturn(int returnId, Cb cb) {
+    send(1081, {{"user_id", userId_}, {"return_id", returnId}}, cb);
 }
 
 void ApiClient::cartRemove(int pid) {

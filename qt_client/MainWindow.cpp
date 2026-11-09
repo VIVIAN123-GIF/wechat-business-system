@@ -9,6 +9,11 @@
 #include "pages/ReturnPage.h"
 #include "pages/StatsPage.h"
 #include "pages/ServicePage.h"
+#include "pages/CouponPage.h"
+#include "pages/NotificationPage.h"
+#include "pages/FavoritesPage.h"
+#include "pages/AdminPage.h"
+#include "UiUtil.h"
 #include <QStackedWidget>
 #include <QLabel>
 #include <QComboBox>
@@ -43,6 +48,10 @@ void MainWindow::buildMainUi() {
     returnPage_   = new ReturnPage(api_);
     statsPage_    = new StatsPage(api_);
     servicePage_  = new ServicePage(api_);
+    couponPage_ = new CouponPage(api_);
+    notificationPage_ = new NotificationPage(api_);
+    favoritesPage_ = new FavoritesPage(api_);
+    adminPage_ = new AdminPage(api_);
 
     auto* mainWidget = new QWidget;
     auto* root = new QVBoxLayout(mainWidget);
@@ -60,12 +69,14 @@ void MainWindow::buildMainUi() {
     themeCombo_->addItem(QStringLiteral("蓝色主题"), "blue");
     themeCombo_->addItem(QStringLiteral("粉色主题"), "pink");
     auto* logoutBtn = new QPushButton(QStringLiteral("退出登录"));
+    auto* checkinBtn = new QPushButton(QStringLiteral("每日签到"));
     top->addWidget(title);
     top->addStretch();
     top->addWidget(userLbl_);
     top->addWidget(new QLabel(QStringLiteral("主题：")));
     top->addWidget(themeCombo_);
     top->addWidget(logoutBtn);
+    top->addWidget(checkinBtn);
     root->addLayout(top);
 
     // 主体：左导航 + 右页面
@@ -91,6 +102,10 @@ void MainWindow::buildMainUi() {
     pageStack_->addWidget(returnPage_);
     pageStack_->addWidget(statsPage_);
     pageStack_->addWidget(servicePage_);
+    pageStack_->addWidget(couponPage_);
+    pageStack_->addWidget(notificationPage_);
+    pageStack_->addWidget(favoritesPage_);
+    pageStack_->addWidget(adminPage_);
 
     for (const auto& it : items) {
         auto* b = new QPushButton(QString::fromUtf8(it.name));
@@ -113,6 +128,18 @@ void MainWindow::buildMainUi() {
             }
         });
     }
+    auto* couponNav = new QPushButton(QStringLiteral("领券中心"));
+    nav->addWidget(couponNav);
+    connect(couponNav, &QPushButton::clicked, this, [this] { pageStack_->setCurrentWidget(couponPage_); couponPage_->refresh(); });
+    auto* notificationNav = new QPushButton(QStringLiteral("消息通知"));
+    nav->addWidget(notificationNav);
+    connect(notificationNav, &QPushButton::clicked, this, [this] { pageStack_->setCurrentWidget(notificationPage_); notificationPage_->refresh(); });
+    auto* favoritesNav = new QPushButton(QStringLiteral("我的收藏"));
+    nav->addWidget(favoritesNav);
+    connect(favoritesNav, &QPushButton::clicked, this, [this] { pageStack_->setCurrentWidget(favoritesPage_); favoritesPage_->refresh(); });
+    auto* adminNav = new QPushButton(QStringLiteral("卖家管理"));
+    adminNav->setVisible(false); nav->addWidget(adminNav);
+    connect(adminNav, &QPushButton::clicked, this, [this] { pageStack_->setCurrentWidget(adminPage_); adminPage_->refresh(); });
     nav->addStretch();
 
     auto* navWidget = new QWidget;
@@ -126,6 +153,11 @@ void MainWindow::buildMainUi() {
         applyTheme(themeCombo_->currentData().toString());
     });
     connect(logoutBtn, &QPushButton::clicked, this, &MainWindow::logout);
+    connect(checkinBtn, &QPushButton::clicked, this, [this] {
+        api_->checkIn([this](quint32 code, const json& result) {
+            userLbl_->setText(code == 2170 ? QStringLiteral("签到成功，获得 %1 积分").arg(result.value("points_awarded", 0)) : errMsg(result));
+        });
+    });
 
     rootStack_->addWidget(mainWidget);
 }
@@ -135,7 +167,9 @@ void MainWindow::onLogin() {
         .arg(api_->username())
         .arg(api_->isAdmin() ? QStringLiteral("管理员") : QStringLiteral("普通用户")));
     rootStack_->setCurrentIndex(1);
+    for (auto* button : findChildren<QPushButton*>()) if (button->text() == QStringLiteral("卖家管理")) button->setVisible(api_->isAdmin());
     shopPage_->refresh();
+    notificationPage_->refresh();
     applyTheme("green");
 }
 

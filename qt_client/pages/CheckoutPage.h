@@ -8,6 +8,7 @@ class QTableWidget;
 class QLabel;
 class QPushButton;
 class QListWidget;
+class QComboBox;
 class ApiClient;
 
 class CheckoutPage : public QWidget {
@@ -23,7 +24,10 @@ private:
     QLabel* resultLbl_;
     QListWidget* promoList_;
     QPushButton* checkoutBtn_;
+    QComboBox* addressBox_;
+    QComboBox* couponBox_;
 
     void loadPromotions();
+    void loadAddresses();
     void doCheckout();
 };

@@ -113,12 +113,50 @@ void OrderPage::loadOrders() {
             auto* retBtn = new QPushButton(QStringLiteral("申请退货"));
             bool canReturn = (status == 1 || status == 2 || status == 3) && ret == 0;
             retBtn->setEnabled(canReturn);
-            orderTable_->setCellWidget(row, 6, retBtn);
 
             int orderId = o.value("order_id", 0);
+            auto* actionBtn = new QPushButton;
+            if (status == 0) actionBtn->setText(QStringLiteral("支付"));
+            else if (status == 2) actionBtn->setText(QStringLiteral("确认收货"));
+            else if (status == 3) actionBtn->setText(QStringLiteral("评价"));
+            else actionBtn->setText(QStringLiteral("无操作"));
+            auto* actionCell = new QWidget;
+            auto* actionLayout = new QHBoxLayout(actionCell);
+            actionLayout->setContentsMargins(0, 0, 0, 0);
+            actionLayout->addWidget(retBtn);
+            actionLayout->addWidget(actionBtn);
+            QPushButton* cancelBtn = nullptr;
+            if (status == 0) {
+                cancelBtn = new QPushButton(QStringLiteral("取消订单"));
+                actionLayout->addWidget(cancelBtn);
+            }
+            orderTable_->setCellWidget(row, 6, actionCell);
+            connect(actionBtn, &QPushButton::clicked, this, [this, orderId, status, items]{
+                if (status == 0) {
+                    api_->payOrder(orderId, [this](quint32 code, const json& j) { tipLabel_->setText(code == 2100 ? QStringLiteral("支付成功") : errMsg(j)); loadOrders(); });
+                } else if (status == 2) {
+                    api_->confirmReceipt(orderId, [this](quint32 code, const json& j) { tipLabel_->setText(code == 2110 ? QStringLiteral("确认收货成功") : errMsg(j)); loadOrders(); });
+                } else if (status == 3 && !items.empty()) {
+                    bool ok = false;
+                    int rating = QInputDialog::getInt(this, QStringLiteral("商品评价"), QStringLiteral("评分（1-5）："), 5, 1, 5, 1, &ok);
+                    if (!ok) return;
+                    QString content = QInputDialog::getText(this, QStringLiteral("商品评价"), QStringLiteral("评价内容："), QLineEdit::Normal, {}, &ok);
+                    if (!ok) return;
+                    int productId = items.front().value("product_id", 0);
+                    api_->createReview(orderId, productId, rating, content, [this](quint32 code, const json& j) { tipLabel_->setText(code == 2130 ? QStringLiteral("评价成功") : errMsg(j)); });
+                }
+            });
             connect(retBtn, &QPushButton::clicked, this, [this, orderId]{
                 applyReturn(orderId);
             });
+            if (cancelBtn) {
+                connect(cancelBtn, &QPushButton::clicked, this, [this, orderId] {
+                    api_->cancelOrder(orderId, [this](quint32 code, const json& j) {
+                        tipLabel_->setText(code == 2101 ? QStringLiteral("订单已取消") : errMsg(j));
+                        loadOrders();
+                    });
+                });
+            }
         }
     });
 }

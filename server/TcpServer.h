@@ -21,6 +21,8 @@ public:
     explicit TcpServer(int port = 8888) : port_(port), running_(false) {}
     ~TcpServer() { stop(); }
 
+    static std::mutex& sharedStockMutex();
+
     bool start();
     void stop();
 

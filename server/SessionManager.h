@@ -6,6 +6,7 @@
 #include <string>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 #include <random>
 #include <chrono>
 #include <sstream>
@@ -21,7 +22,7 @@ public:
     std::string create(int userId) {
         std::lock_guard<std::mutex> lock(mtx_);
         std::string token = genToken(userId);
-        sessions_[token] = userId;
+        sessions_[token] = {userId, std::chrono::steady_clock::now() + std::chrono::minutes(TTL_MINUTES)};
         return token;
     }
 
@@ -30,7 +31,11 @@ public:
         std::lock_guard<std::mutex> lock(mtx_);
         auto it = sessions_.find(token);
         if (it == sessions_.end()) return false;
-        outUserId = it->second;
+        if (std::chrono::steady_clock::now() >= it->second.expiresAt) {
+            sessions_.erase(it);
+            return false;
+        }
+        outUserId = it->second.userId;
         return true;
     }
 
@@ -41,6 +46,12 @@ public:
     }
 
 private:
+    static constexpr int TTL_MINUTES = 30;
+    struct Session {
+        int userId = 0;
+        std::chrono::steady_clock::time_point expiresAt;
+    };
+
     SessionManager() = default;
     SessionManager(const SessionManager&) = delete;
     SessionManager& operator=(const SessionManager&) = delete;
@@ -55,5 +66,5 @@ private:
     }
 
     mutable std::mutex mtx_;
-    std::unordered_map<std::string, int> sessions_;
+    mutable std::unordered_map<std::string, Session> sessions_;
 };

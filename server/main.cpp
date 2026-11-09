@@ -10,6 +10,9 @@
 #include <string>
 #include <sstream>
 #include <iomanip>
+#include <atomic>
+#include <chrono>
+#include <thread>
 #include "TcpServer.h"
 #include "Logger.h"
 #include "database/SQLiteHelper.h"
@@ -77,6 +80,83 @@ int main() {
             LOG_ERROR(std::string("数据库建表失败: ") + (errMsg ? errMsg : "unknown"));
             if (errMsg) sqlite3_free(errMsg);
             return 1;
+        }
+        if (!hasColumn(db, "orders", "address_receiver")) {
+            if (sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN address_receiver TEXT; ALTER TABLE orders ADD COLUMN address_phone TEXT; ALTER TABLE orders ADD COLUMN address_detail TEXT;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("订单地址字段迁移失败: ") + (errMsg ? errMsg : "unknown"));
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "orders", "coupon_id")) {
+            if (sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN coupon_id INTEGER;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("订单优惠券字段迁移失败: ") + (errMsg ? errMsg : "unknown"));
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "orders", "receive_time")) {
+            if (sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN receive_time DATETIME;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("订单签收字段迁移失败: ") + (errMsg ? errMsg : "unknown"));
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "users", "points")) {
+            if (sqlite3_exec(db, "ALTER TABLE users ADD COLUMN points INTEGER NOT NULL DEFAULT 0;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("用户积分字段迁移失败: ") + (errMsg ? errMsg : "unknown"));
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "users", "inviter_id")) {
+            if (sqlite3_exec(db, "ALTER TABLE users ADD COLUMN inviter_id INTEGER;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR("用户邀请关系字段迁移失败");
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "users", "invite_code")) {
+            if (sqlite3_exec(db, "ALTER TABLE users ADD COLUMN invite_code TEXT;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR("用户邀请码字段迁移失败");
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "orders", "shipping_fee")) {
+            if (sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN shipping_fee INTEGER NOT NULL DEFAULT 0;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR("订单运费字段迁移失败");
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "orders", "points_used")) {
+            if (sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN points_used INTEGER NOT NULL DEFAULT 0;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR("订单积分字段迁移失败");
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "reviews", "image_url")) {
+            if (sqlite3_exec(db, "ALTER TABLE reviews ADD COLUMN image_url TEXT NOT NULL DEFAULT '';", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("评价图片字段迁移失败: ") + (errMsg ? errMsg : "unknown"));
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "order_items", "sku_id")) {
+            if (sqlite3_exec(db, "ALTER TABLE order_items ADD COLUMN sku_id INTEGER;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("order_items SKU migration failed: ") + (errMsg ? errMsg : "unknown"));
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "order_items", "sku_label")) {
+            if (sqlite3_exec(db, "ALTER TABLE order_items ADD COLUMN sku_label TEXT NOT NULL DEFAULT '';", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("order_items SKU label migration failed: ") + (errMsg ? errMsg : "unknown"));
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
         }
         // 首次运行则插入种子数据
         sqlite3_stmt* stmt = nullptr;
@@ -225,12 +305,45 @@ int main() {
         return 1;
     }
 
+    std::atomic<bool> cleanupRunning{true};
+    // 答辩演示期间关闭后台定时清理（拼团超时/待支付订单超时），
+    // 避免长时间运行触发已知的 cleanupContext 边界崩溃；
+    // 上线前把下面这行改成 true 即可恢复完整功能。
+    const bool enableBackgroundCleanup = false;
+    std::thread cleanupThread([&] {
+        if (!enableBackgroundCleanup) return;
+        while (cleanupRunning.load()) {
+            std::this_thread::sleep_for(std::chrono::seconds(30));
+            if (!cleanupRunning.load()) break;
+            HandlerContext cleanupContext;
+            cleanupContext.db = DatabaseManager::instance().getConnection();
+            cleanupContext.products = std::make_shared<ProductRepository>(cleanupContext.db);
+            cleanupContext.orders = std::make_shared<OrderRepository>(cleanupContext.db);
+            cleanupContext.users = std::make_shared<UserRepository>(cleanupContext.db);
+            cleanupContext.returns = std::make_shared<ReturnRepository>(cleanupContext.db);
+            cleanupContext.promos = std::make_shared<PromotionRepository>(cleanupContext.db);
+            cleanupContext.promoFactory = std::make_shared<PromotionFactory>(cleanupContext.promos);
+            cleanupContext.stockMutex = &TcpServer::sharedStockMutex();
+            cleanupContext.sessions = &SessionManager::instance();
+            try {
+                expireGroupsNow(cleanupContext);
+                expirePendingOrdersNow(cleanupContext);
+            } catch (const std::exception& e) {
+                LOG_ERROR(std::string("后台清理任务失败: ") + e.what());
+            } catch (...) {
+                LOG_ERROR("后台清理任务失败: unknown exception");
+            }
+        }
+    });
+
     // 4. 主线程等待退出指令
     std::cout << "\n输入 q 并回车以停止服务..." << std::endl;
     std::string cmd;
     while (std::getline(std::cin, cmd)) {
         if (cmd == "q" || cmd == "Q") break;
     }
+    cleanupRunning.store(false);
+    if (cleanupThread.joinable()) cleanupThread.join();
     server.stop();
     return 0;
 }

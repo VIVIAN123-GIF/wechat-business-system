@@ -43,6 +43,7 @@ struct User {
     std::string realName;
     std::string phone;
     int level = 1;          // 1普通 2VIP
+    int points = 0;
 };
 
 // 订单明细（快照）
@@ -53,6 +54,8 @@ struct OrderItem {
     std::string productName;  // 快照
     int price = 0;            // 快照，单位：分
     int quantity = 0;
+    int skuId = 0;
+    std::string skuLabel;
 };
 
 // 订单
@@ -63,9 +66,25 @@ struct Order {
     int totalAmount = 0;       // 单位：分
     int discountAmount = 0;    // 单位：分
     int finalAmount = 0;      // 单位：分
+    int couponId = 0;
     int status = ORDER_PAID;   // 0待支付 1已支付 2已发货 3已完成 4已取消 5退货中
     std::string createTime;
+    std::string addressReceiver;
+    std::string addressPhone;
+    std::string addressDetail;
+    std::string receiveTime;
+    int shippingFee = 0;
+    int pointsUsed = 0;
     std::vector<OrderItem> items;
+};
+
+struct Address {
+    int id = 0;
+    int userId = 0;
+    std::string receiverName;
+    std::string phone;
+    std::string detail;
+    bool isDefault = false;
 };
 
 // 退货申请

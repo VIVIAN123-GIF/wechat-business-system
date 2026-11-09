@@ -5,6 +5,11 @@
 #include "Logger.h"
 #include <iostream>
 
+std::mutex& TcpServer::sharedStockMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
 bool TcpServer::start() {
     // 支持同进程 stop->start 重启：清空上次残留任务并解除 shutdown
     TaskQueue::getInstance().reset();
@@ -53,8 +58,7 @@ bool TcpServer::start() {
     ctx_.returns       = std::make_shared<ReturnRepository>(ctx_.db);
     ctx_.promos        = std::make_shared<PromotionRepository>(ctx_.db);
     ctx_.promoFactory  = std::make_shared<PromotionFactory>(ctx_.promos);
-    static std::mutex stockMutex;
-    ctx_.stockMutex = &stockMutex;
+    ctx_.stockMutex = &sharedStockMutex();
     ctx_.sessions   = &SessionManager::instance();
 
     workerPool_.setContext(ctx_);

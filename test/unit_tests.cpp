@@ -98,8 +98,6 @@ int main() {
     for (int i = 0; i < 100; ++i) cents = static_cast<int>(std::round(cents * 0.99));
     CHECK(cents > 3600 && cents < 3700);  // 不要求精确值，但不应 NaN/爆炸
 
-    std::cout << "\n========== 单元测试结果: " << g_pass << " passed, "
-              << g_fail << " failed ==========\n";
     std::cout << "\n--- 促销边界参数 ---\n";
     DiscountPromotion invalidDiscount(7, -0.5);
     CHECK_EQ_INT(invalidDiscount.apply(10000), 0);
@@ -113,7 +111,7 @@ int main() {
     TierDiscountPromotion emptyTiers(11, {{0, 0.9}, {-1, -0.5}});
     CHECK_EQ_INT(emptyTiers.applyToItems(0, makeItems(10000, 2)), 20000);
 
-    std::cout << "========== final unit test result: " << g_pass << " passed, "
+    std::cout << "========== 单元测试结果: " << g_pass << " passed, "
               << g_fail << " failed ==========\n";
     return g_fail > 0 ? 1 : 0;
 }

@@ -29,7 +29,16 @@ try {
 
     $server = New-Object System.Diagnostics.Process
     $server.StartInfo = $startInfo
+
+    # 异步读取并丢弃输出：持续排空重定向管道，防止约 4KB 缓冲区
+    # 写满后子进程的日志线程（cout/cerr）阻塞，导致后续请求超时。
+    $drain = { }
+    Register-ObjectEvent -InputObject $server -EventName OutputDataReceived -Action $drain | Out-Null
+    Register-ObjectEvent -InputObject $server -EventName ErrorDataReceived -Action $drain | Out-Null
+
     [void]$server.Start()
+    $server.BeginOutputReadLine()
+    $server.BeginErrorReadLine()
     $serverStarted = $true
     Start-Sleep -Seconds 2
 

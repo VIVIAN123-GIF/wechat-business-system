@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     real_name TEXT,
     phone TEXT,
     level INTEGER DEFAULT 1,          -- 1:普通 2:VIP
+    role TEXT NOT NULL DEFAULT 'customer', -- customer / admin / customer_service / operator
     points INTEGER NOT NULL DEFAULT 0,
     inviter_id INTEGER,
     invite_code TEXT UNIQUE,
@@ -217,6 +218,33 @@ CREATE TABLE IF NOT EXISTS service_messages (
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- 客服工单/会话主表，消息与工单分离，支持接管、挂起、关闭和未读统计
+CREATE TABLE IF NOT EXISTS service_tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject TEXT NOT NULL DEFAULT '在线咨询',
+    status TEXT NOT NULL DEFAULT 'open', -- open / pending / resolved / closed
+    assigned_to INTEGER,
+    last_message_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    closed_at DATETIME,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(assigned_to) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_service_tickets_user ON service_tickets(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_service_tickets_status ON service_tickets(status, last_message_at);
+
+CREATE TABLE IF NOT EXISTS promotion_audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promotion_id INTEGER NOT NULL,
+    operator_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+    FOREIGN KEY(operator_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS inventory_audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER,
@@ -257,6 +285,8 @@ CREATE TABLE IF NOT EXISTS returns (
     orig_status INTEGER DEFAULT 1,    -- 申请时订单原状态（审核拒绝时恢复）
     apply_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     audit_time DATETIME,
+    audit_comment TEXT NOT NULL DEFAULT '',
+    refund_amount INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (order_id) REFERENCES orders(id)
 );
 
@@ -273,8 +303,35 @@ CREATE TABLE IF NOT EXISTS promotions (
     param6 REAL,                      -- 阶梯折扣:第3阶梯折扣率（超出最高档按此档延续）
     start_time DATETIME,
     end_time DATETIME,
-    status INTEGER DEFAULT 1
+    status INTEGER DEFAULT 1,
+    exclusive_group TEXT NOT NULL DEFAULT '',
+    max_uses INTEGER NOT NULL DEFAULT 0,
+    per_user_limit INTEGER NOT NULL DEFAULT 0
 );
+
+-- 每笔订单实际使用的促销，用于 max_uses / per_user_limit 校验和审计
+CREATE TABLE IF NOT EXISTS order_promotions (
+    order_id INTEGER NOT NULL,
+    promotion_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(order_id, promotion_id),
+    FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE,
+    FOREIGN KEY(promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS order_promotions (
+    order_id INTEGER NOT NULL,
+    promotion_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(order_id, promotion_id),
+    FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE,
+    FOREIGN KEY(promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_order_promotions_promo ON order_promotions(promotion_id);
+CREATE INDEX IF NOT EXISTS idx_order_promotions_user_promo ON order_promotions(user_id, promotion_id);
 
 -- 为提高查询效率创建索引
 CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);

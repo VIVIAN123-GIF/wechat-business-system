@@ -67,3 +67,27 @@ INSERT INTO returns (order_id, user_id, reason, status, orig_status, apply_time,
  '想换个颜色，不影响二次销售',       2, 3, '2026-11-04 10:00:00', '2026-11-04 14:00:00'),
 ((SELECT id FROM orders WHERE order_no='MS20261109221005005'), 3,
  '椅子收到有划痕，质量问题',         3, 3, '2026-11-03 11:00:00', '2026-11-03 16:00:00');
+
+-- ========== 6. 降噪无线耳机详情演示数据 ==========
+UPDATE products
+SET description = '旗舰主动降噪无线耳机；支持通透模式、双设备连接和空间音频；单次播放约30小时，充电10分钟可播放3小时；配备三档降噪、高清通话麦克风、IPX4防泼溅，适合通勤、旅行和办公。',
+    category = '数码', stock = 36, status = 1
+WHERE name = '降噪无线耳机';
+
+INSERT OR IGNORE INTO product_skus(product_id, sku_code, color, size, price_delta, stock, status)
+SELECT id, 'HEADPHONE-BLACK', '曜石黑', '标准版', 0, 12, 1 FROM products WHERE name = '降噪无线耳机';
+INSERT OR IGNORE INTO product_skus(product_id, sku_code, color, size, price_delta, stock, status)
+SELECT id, 'HEADPHONE-WHITE', '云雾白', '标准版', 0, 10, 1 FROM products WHERE name = '降噪无线耳机';
+INSERT OR IGNORE INTO product_skus(product_id, sku_code, color, size, price_delta, stock, status)
+SELECT id, 'HEADPHONE-BLUE-PRO', '星海蓝', '礼盒版', 5000, 8, 1 FROM products WHERE name = '降噪无线耳机';
+INSERT OR IGNORE INTO product_skus(product_id, sku_code, color, size, price_delta, stock, status)
+SELECT id, 'HEADPHONE-BLACK-SPORT', '曜石黑', '运动套装', 3000, 6, 1 FROM products WHERE name = '降噪无线耳机';
+
+INSERT OR IGNORE INTO reviews(order_id, product_id, user_id, rating, content)
+SELECT o.id, p.id, o.user_id, 5, '降噪效果很明显，地铁通勤基本听不到环境声，佩戴舒适，续航也符合描述。'
+FROM orders o JOIN products p ON p.name = '降噪无线耳机'
+WHERE o.user_id = 2 ORDER BY o.id LIMIT 1;
+INSERT OR IGNORE INTO reviews(order_id, product_id, user_id, rating, content)
+SELECT o.id, p.id, o.user_id, 4, '音质清晰，连接速度快，通透模式很实用。耳机盒小巧，适合出差携带。'
+FROM orders o JOIN products p ON p.name = '降噪无线耳机'
+WHERE o.user_id = 3 ORDER BY o.id LIMIT 1;

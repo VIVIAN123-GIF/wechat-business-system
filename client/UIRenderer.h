@@ -23,7 +23,7 @@ public:
     virtual void drawProductDetail(const ProductInfo& p) = 0;
 
     // 购物车
-    virtual void drawCart(const std::map<int, CartItem>& items, double total) = 0;
+    virtual void drawCart(const std::map<std::pair<int, int>, CartItem>& items, double total) = 0;
 
     // 促销
     virtual void drawPromoList(const std::vector<PromoInfo>& promos) = 0;

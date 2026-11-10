@@ -1,3 +1,6 @@
+// ============================================================
+// ClientController.cpp - 控制台客户端主控制器（MVC 的 C）
+// ============================================================
 #include "ClientController.h"
 #include "Renderers.h"
 #include "../common/ProtocolHeader.h"
@@ -132,6 +135,7 @@ bool ClientController::loginLoop() {
                 level_ = j.value("level", 1);
                 token_ = j.value("token", "");
                 isLoggedIn_ = true;
+                syncCartFromServer();
                 renderer_->drawMessage("欢迎，" + username_ +
                                        (level_ >= 2 ? "（VIP 会员，享额外95折）" : ""));
                 return true;
@@ -153,6 +157,21 @@ bool ClientController::loginLoop() {
             }
         }
     }
+}
+
+bool ClientController::syncCartFromServer() {
+    json req = {{"user_id", userId_}, {"token", token_}};
+    int code = 0; std::string body;
+    if (!sendAndRecv(ProtocolConstants::C_REQ_CART_LIST, req.dump(), code, body) || code != ProtocolConstants::S_RES_CART_LIST) return false;
+    try {
+        auto result = json::parse(body); LocalCart fresh;
+        for (const auto& item : result.value("items", json::array())) {
+            fresh.addItem(item.value("product_id", 0), item.value("name", ""),
+                          item.value("price", 0) / 100.0, item.value("quantity", 0),
+                          item.value("sku_id", 0), item.value("sku_label", ""));
+        }
+        cart_ = std::move(fresh); return true;
+    } catch (...) { return false; }
 }
 
 void ClientController::mainLoop() {
@@ -252,6 +271,7 @@ void ClientController::handleShowProducts() {
 }
 
 void ClientController::handleCartManagement() {
+    int respCode = 0; std::string respBody;
     while (true) {
         renderer_->drawCart(cart_.getItems(), cart_.getTotalPrice());
         std::cout << "\n购物车管理：\n1. 删除商品\n2. 修改数量\n3. 清空\n0. 返回主菜单\n";
@@ -259,16 +279,16 @@ void ClientController::handleCartManagement() {
         if (choice == 0) return;
         if (choice == 1) {
             int pid = getUserInputInt("输入商品ID: ", 1, 100000);
-            cart_.removeItem(pid);
-            renderer_->drawMessage("已删除");
+            json req={{"user_id",userId_},{"token",token_},{"product_id",pid},{"sku_id",0}};
+            if(sendAndRecv(ProtocolConstants::C_REQ_CART_REMOVE,req.dump(),respCode,respBody)) cart_.removeItem(pid);
         } else if (choice == 2) {
             int pid = getUserInputInt("输入商品ID: ", 1, 100000);
             int qty = getUserInputInt("新数量(0删除): ", 0, 9999);
-            cart_.updateQuantity(pid, qty);
-            renderer_->drawMessage("已更新");
+            json req={{"user_id",userId_},{"token",token_},{"product_id",pid},{"sku_id",0},{"quantity",qty}};
+            if(sendAndRecv(ProtocolConstants::C_REQ_CART_SET,req.dump(),respCode,respBody)) cart_.updateQuantity(pid, qty);
         } else if (choice == 3) {
-            cart_.clear();
-            renderer_->drawMessage("购物车已清空");
+            json req={{"user_id",userId_},{"token",token_}};
+            if(sendAndRecv(ProtocolConstants::C_REQ_CART_CLEAR,req.dump(),respCode,respBody)) cart_.clear();
         }
     }
 }
@@ -365,7 +385,6 @@ void ClientController::handleCheckout() {
     json req;
     req["user_id"] = userId_;
     req["promo_ids"] = promoIds;
-    req["items"] = json::parse(cart_.itemsToJson());
     req["address_id"] = addressId;
     if (sendAndRecv(ProtocolConstants::C_REQ_CHECKOUT, req.dump(), respCode, respBody)) {
         try {

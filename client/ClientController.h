@@ -42,6 +42,7 @@ private:
     int getUserInputInt(const std::string& prompt, int min, int max);
     bool sendAndRecv(int code, const std::string& body,
                      int& respCode, std::string& respBody);
+    bool syncCartFromServer();
 
     std::unique_ptr<TcpClient> tcpClient_;
     std::unique_ptr<UIRenderer> renderer_;

@@ -15,6 +15,8 @@ struct ProductInfo {
 
 struct CartItem {
     int productId = 0;
+    int skuId = 0;
+    std::string skuLabel;
     std::string productName;
     double price = 0.0;
     int quantity = 0;

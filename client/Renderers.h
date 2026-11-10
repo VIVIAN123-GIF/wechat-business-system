@@ -111,7 +111,7 @@ public:
                   << " | 价格: " << std::fixed << std::setprecision(2) << p.price
                   << " | 库存: " << p.stock << " | 分类: " << p.category << "\n";
     }
-    void drawCart(const std::map<int, CartItem>& items, double total) override {
+    void drawCart(const std::map<std::pair<int, int>, CartItem>& items, double total) override {
         if (items.empty()) { std::cout << theme_.infoOf("购物车为空") << "\n"; return; }
         const char* sep = "+------+--------------------+------+----------+";
         std::cout << theme_.borderOf(sep) << "\n"
@@ -238,7 +238,7 @@ public:
                   << padR(p.category, 8) << " |\n"
                   << theme_.borderOf(sep) << "\n";
     }
-    void drawCart(const std::map<int, CartItem>& items, double total) override {
+    void drawCart(const std::map<std::pair<int, int>, CartItem>& items, double total) override {
         if (items.empty()) { std::cout << theme_.infoOf("[购物车] 为空") << "\n"; return; }
         const char* sep = "+------+--------------------+------+----------+";
         std::cout << theme_.accentOf(

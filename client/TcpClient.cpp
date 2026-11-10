@@ -1,9 +1,13 @@
+// ============================================================
+// TcpClient.cpp - 控制台客户端通信实现
+// ============================================================
 #include "TcpClient.h"
 #include "../common/ProtocolEncoder.h"
 #include "../common/NetUtil.h"
 #include <cstring>
 #include <iostream>
 
+// 连接服务端（Windows 下需先初始化 Winsock）
 bool TcpClient::connect() {
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -34,6 +38,7 @@ void TcpClient::disconnect() {
     connected_ = false;
 }
 
+// 循环发送直到全部发完（TCP 是流，一次 send 可能发不完）
 bool TcpClient::sendRaw(const char* data, int len) {
     if (sockfd_ == INVALID_SOCKET || !connected_) return false;
     int sent = 0;
@@ -50,6 +55,7 @@ bool TcpClient::sendRequest(int protocolCode, const std::string& jsonBody) {
     return sendRaw(buffer.data(), static_cast<int>(buffer.size()));
 }
 
+// 同步接收一个完整响应（先读16字节头，再按长度读body）
 bool TcpClient::receiveResponse(int& outProtocolCode, std::string& outJsonBody, int timeoutSec) {
     if (sockfd_ == INVALID_SOCKET || !connected_) return false;
     // 设置接收超时

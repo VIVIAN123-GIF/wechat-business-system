@@ -36,6 +36,14 @@ namespace ProtocolConstants {
     // 购物车（服务端仅库存校验）
     constexpr uint32_t C_REQ_ADD_CART     = 1010;
     constexpr uint32_t S_RES_ADD_CART     = 2010;
+    constexpr uint32_t C_REQ_CART_LIST    = 1011;
+    constexpr uint32_t S_RES_CART_LIST    = 2011;
+    constexpr uint32_t C_REQ_CART_SET     = 1012;
+    constexpr uint32_t S_RES_CART_SET     = 2012;
+    constexpr uint32_t C_REQ_CART_REMOVE  = 1013;
+    constexpr uint32_t S_RES_CART_REMOVE  = 2013;
+    constexpr uint32_t C_REQ_CART_CLEAR   = 1014;
+    constexpr uint32_t S_RES_CART_CLEAR   = 2014;
     // 促销
     constexpr uint32_t C_REQ_PROMO_LIST   = 1020;
     constexpr uint32_t S_RES_PROMO_LIST   = 2020;
@@ -110,10 +118,21 @@ namespace ProtocolConstants {
     constexpr uint32_t S_RES_SHIPMENT_CREATE = 2181;
     constexpr uint32_t C_REQ_ADMIN_PRODUCT = 1190;
     constexpr uint32_t S_RES_ADMIN_PRODUCT = 2190;
+    // 管理员商品列表（包含已下架商品与状态）
+    constexpr uint32_t C_REQ_ADMIN_PRODUCT_LIST = 1191;
+    constexpr uint32_t S_RES_ADMIN_PRODUCT_LIST = 2191;
     constexpr uint32_t C_REQ_SKU_LIST = 1200;
     constexpr uint32_t S_RES_SKU_LIST = 2200;
     constexpr uint32_t C_REQ_SERVICE_REPLY = 1201;
     constexpr uint32_t S_RES_SERVICE_REPLY = 2201;
+    constexpr uint32_t C_REQ_SERVICE_TICKETS = 1202;
+    constexpr uint32_t S_RES_SERVICE_TICKETS = 2202;
+    constexpr uint32_t C_REQ_SERVICE_TICKET_UPDATE = 1203;
+    constexpr uint32_t S_RES_SERVICE_TICKET_UPDATE = 2203;
+    constexpr uint32_t C_REQ_REFERRAL_QUERY = 1204;
+    constexpr uint32_t S_RES_REFERRAL_QUERY = 2204;
+    constexpr uint32_t C_REQ_PROMO_ADMIN = 1210;
+    constexpr uint32_t S_RES_PROMO_ADMIN = 2210;
     // 错误
     constexpr uint32_t S_ERR_GENERAL      = 4001;
     constexpr uint32_t S_ERR_UNAUTH       = 4002;

@@ -60,7 +60,7 @@
   <!-- 1. 系统总体架构图 -->
   <section class="diagram" id="d1">
     <h2>1. 系统总体架构图</h2>
-    <p class="caption">客户端 MVC（Controller + TcpClient + LocalCart + UI 策略/抽象工厂）↔ 自定义 TCP 协议 ↔ 服务端三层架构（接入层 / 业务层命令模式 / 持久层 Repository），中间由 TaskQueue 单例消息队列解耦，WorkerPool 线程池消费。</p>
+    <p class="caption">客户端 MVC（Controller + TcpClient + LocalCart + UI 策略/抽象工厂）↔ 自定义 TCP 协议 ↔ 服务端接入层/业务 Handler/持久化层。购物车采用服务端权威、本地缓存：登录通过 1011 拉取，1010 加购及 1012 改量、1013 删除、1014 清空均在服务端成功后更新本地。</p>
     <div class="mermaid">
 flowchart TB
     subgraph Client["客户端进程（MVC）"]
@@ -106,7 +106,8 @@ flowchart TB
             H3["CheckoutHandler"]
             H4["ReturnHandler"]
             H5["SalesStatsHandler"]
-            Hx["…共 15 个 Handler"]
+            HC["CartList / CartSetQuantity<br/>CartRemove / CartClear"]
+            Hx["…共 48 个 Handler"]
         end
         subgraph Repo["持久层（Repository）"]
             R1["ProductRepository"]
@@ -137,7 +138,7 @@ flowchart TB
   <!-- 2. 时序图 -->
   <section class="diagram" id="d2">
     <h2>2. 客户端 / 服务端时序图</h2>
-    <p class="caption">以结算（协议码 1030）为例的完整请求-响应链路：接入线程只负责收包入队，Worker 线程出队后经 HandlerFactory 分发到 CheckoutHandler，内部完成鉴权 → 事务 → 原子扣减 → 促销链 → 落库 → 提交 → 观察者广播。</p>
+    <p class="caption">以服务端权威结算（协议码 1030）为例：客户端不再信任本地 items 快照，CheckoutHandler 在事务内读取 cart_items，完成鉴权、库存校验、促销、订单落库和购物车清空。</p>
     <div class="mermaid">
 sequenceDiagram
     autonumber
@@ -156,7 +157,7 @@ sequenceDiagram
     participant DB as SQLite
 
     U->>CC: 选择结算
-    CC->>TC: sendRequest(1030, {user_id,token,items,promo_ids})
+    CC->>TC: sendRequest(1030, {user_id,token,promo_ids,address_id})
     TC->>CH: TCP 报文（16字节头 + JSON体）
     CH->>CH: NetUtil::recvFullPacket 解包
     CH->>TQ: push Task{code=1030, body}
@@ -168,7 +169,9 @@ sequenceDiagram
     SM-->>H: 鉴权通过
     H->>DB: BEGIN IMMEDIATE TRANSACTION
     H->>H: lock_guard(stockMutex) 内存级互斥锁
-    loop 遍历每个商品明细
+    H->>DB: SELECT cart_items WHERE user_id=?
+    DB-->>H: 服务端购物车明细（按 product_id + sku_id）
+    loop 遍历服务端购物车明细
         H->>PR: findById(product_id)
         PR-->>H: Product
         H->>PR: deductStock(id, qty)<br/>UPDATE stock=stock-qty WHERE stock>=qty
@@ -181,6 +184,7 @@ sequenceDiagram
     H->>H: chain.applyToItems(total, items) → finalAmount
     H->>OR: insert(order)<br/>order_no UNIQUE 冲突重试≤3次
     OR-->>H: 成功
+    H->>DB: DELETE FROM cart_items WHERE user_id=?
     H->>DB: COMMIT
     H->>H: OrderEventBus.notifyOrderCreated 观察者广播
     H-->>W: resp={order_id,order_no,original,discount,final,promo_desc}
@@ -281,7 +285,7 @@ classDiagram
   <!-- 4. 数据库 ER 图 -->
   <section class="diagram" id="d4">
     <h2>4. 数据库 ER 图</h2>
-    <p class="caption">依据 database/schema.sql 实际表结构。六张表：users / products / orders / order_items / returns / promotions。金额全部以整数分存储；order_items 保存商品名称与单价快照。</p>
+    <p class="caption">依据 database/schema.sql 实际表结构。当前数据库包含 27 张业务表；核心表包括 users / products / orders / order_items / returns / promotions。金额全部以整数分存储；order_items 保存商品名称与单价快照。</p>
     <div class="note">注：order_items.product_id 为逻辑引用，schema 中未建立外键约束（购买后商品可下架/删除，快照保证订单不可变）。</div>
     <div class="mermaid">
 erDiagram
@@ -304,6 +308,24 @@ erDiagram
         string category
         string image_url
         int status "0下架 1上架"
+    }
+    product_skus {
+        int id PK
+        int product_id FK
+        string sku_code UK
+        string color
+        string size
+        int price_delta "分"
+        int stock
+        int status "0下架 1上架"
+    }
+    cart_items {
+        int id PK
+        int user_id FK
+        int product_id FK
+        int sku_id "0表示默认规格"
+        int quantity
+        datetime updated_at
     }
     orders {
         int id PK
@@ -348,6 +370,9 @@ erDiagram
     }
 
     users ||--o{ orders : "下单"
+    users ||--o{ cart_items : "拥有购物车"
+    products ||--o{ product_skus : "包含规格"
+    products ||--o{ cart_items : "加入购物车"
     orders ||--o{ order_items : "包含明细"
     orders ||--o{ returns : "申请退货"
     products ||--o{ order_items : "被购买(逻辑引用)"
@@ -367,16 +392,19 @@ flowchart TD
     D -->|"否"| Z2["返回 4001 err=1007<br/>促销不存在或已过期"]
     D -->|"是"| E["BEGIN IMMEDIATE TRANSACTION"]
     E --> F["lock_guard(stockMutex)<br/>内存级互斥锁"]
-    F --> G["遍历 items 逐件处理"]
-    G --> H["ProductRepository.findById"]
-    H --> I{"商品存在?"}
+    F --> G["读取服务端 cart_items"]
+    G --> H{"购物车为空?"}
+    H -->|"是"| EMPTY["返回 CART_EMPTY"]
+    H -->|"否"| I0["遍历服务端购物车明细"]
+    I0 --> J0["ProductRepository.findById"]
+    J0 --> I{"商品存在且有效?"}
     I -->|"否"| ROLL["ROLLBACK 回滚事务"]
     I -->|"是"| J["deductStock 原子扣减<br/>UPDATE stock=stock-qty<br/>WHERE id=? AND stock>=qty"]
     J --> K{"扣减成功?"}
     K -->|"否 库存不足"| ROLL
     K -->|"是"| L["记录商品快照 name/price<br/>累加 totalAmount"]
     L --> M{"还有下一件?"}
-    M -->|"是"| G
+    M -->|"是"| I0
     M -->|"否"| N["PromoChainBuilder.build<br/>构建促销链(策略+装饰)"]
     N --> O{"用户 level>=2 VIP?"}
     O -->|"是"| P["包裹 ExtraDiscountDecorator(0.95)"]
@@ -385,7 +413,7 @@ flowchart TD
     Q --> R["OrderRepository.insert<br/>order_no UNIQUE 冲突重试≤3次"]
     R --> S{"插入成功?"}
     S -->|"否"| ROLL
-    S -->|"是"| T["COMMIT 提交事务"]
+    S -->|"是"| T["DELETE FROM cart_items WHERE user_id=?<br/>COMMIT 提交事务"]
     T --> U["OrderEventBus.notifyOrderCreated<br/>观察者广播订单创建事件"]
     U --> V(["返回 2030<br/>order_id/order_no/original/<br/>discount/final/promo_desc"])
     ROLL --> Z3["返回 4001<br/>库存不足/商品不存在/系统繁忙"]

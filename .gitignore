@@ -45,6 +45,7 @@ build-*/
 # Local DB backups
 *.db.bak
 *.db.bak2
+*.db.bak_before_*
 
 # Logs and temp files
 *.log
@@ -66,3 +67,10 @@ application-local.properties
 # Uploaded files (if any)
 uploads/
 temp/
+
+# Build / compile database
+compile_commands.json
+
+# Test run temp files
+test-run-qt-stop.flag
+test-runs/

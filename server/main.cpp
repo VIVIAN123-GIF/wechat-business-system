@@ -82,8 +82,22 @@ int main() {
             return 1;
         }
         if (!hasColumn(db, "orders", "address_receiver")) {
-            if (sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN address_receiver TEXT; ALTER TABLE orders ADD COLUMN address_phone TEXT; ALTER TABLE orders ADD COLUMN address_detail TEXT;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
-                LOG_ERROR(std::string("订单地址字段迁移失败: ") + (errMsg ? errMsg : "unknown"));
+            if (sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN address_receiver TEXT;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("订单收货人字段迁移失败: ") + (errMsg ? errMsg : "unknown"));
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "orders", "address_phone")) {
+            if (sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN address_phone TEXT;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("订单收货电话字段迁移失败: ") + (errMsg ? errMsg : "unknown"));
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "orders", "address_detail")) {
+            if (sqlite3_exec(db, "ALTER TABLE orders ADD COLUMN address_detail TEXT;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("订单收货地址字段迁移失败: ") + (errMsg ? errMsg : "unknown"));
                 if (errMsg) sqlite3_free(errMsg);
                 return 1;
             }
@@ -105,6 +119,13 @@ int main() {
         if (!hasColumn(db, "users", "points")) {
             if (sqlite3_exec(db, "ALTER TABLE users ADD COLUMN points INTEGER NOT NULL DEFAULT 0;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
                 LOG_ERROR(std::string("用户积分字段迁移失败: ") + (errMsg ? errMsg : "unknown"));
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "users", "role")) {
+            if (sqlite3_exec(db, "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'customer'; UPDATE users SET role='admin' WHERE username='admin' AND level>=2;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR("用户角色字段迁移失败");
                 if (errMsg) sqlite3_free(errMsg);
                 return 1;
             }
@@ -158,6 +179,41 @@ int main() {
                 return 1;
             }
         }
+        if (!hasColumn(db, "returns", "audit_comment")) {
+            if (sqlite3_exec(db, "ALTER TABLE returns ADD COLUMN audit_comment TEXT NOT NULL DEFAULT '';", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR("退货审核意见字段迁移失败");
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "returns", "refund_amount")) {
+            if (sqlite3_exec(db, "ALTER TABLE returns ADD COLUMN refund_amount INTEGER NOT NULL DEFAULT 0;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR("退货退款金额字段迁移失败");
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "promotions", "exclusive_group")) {
+            if (sqlite3_exec(db, "ALTER TABLE promotions ADD COLUMN exclusive_group TEXT NOT NULL DEFAULT '';", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR("促销互斥组字段迁移失败");
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "promotions", "max_uses")) {
+            if (sqlite3_exec(db, "ALTER TABLE promotions ADD COLUMN max_uses INTEGER NOT NULL DEFAULT 0;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR("促销总次数字段迁移失败");
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
+        if (!hasColumn(db, "promotions", "per_user_limit")) {
+            if (sqlite3_exec(db, "ALTER TABLE promotions ADD COLUMN per_user_limit INTEGER NOT NULL DEFAULT 0;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR("促销个人次数字段迁移失败");
+                if (errMsg) sqlite3_free(errMsg);
+                return 1;
+            }
+        }
         // 首次运行则插入种子数据
         sqlite3_stmt* stmt = nullptr;
         const char* cnt = "SELECT COUNT(*) FROM users";
@@ -180,19 +236,28 @@ int main() {
         if (seeded) LOG_INFO("已初始化种子数据（用户/商品/促销）");
 
         // ===== 老库迁移：promotions 表补充阶梯折扣参数字段（param3~param6） =====
-        if (!hasColumn(db, "promotions", "param3")) {
-            if (sqlite3_exec(db,
-                "ALTER TABLE promotions ADD COLUMN param3 REAL;"
-                "ALTER TABLE promotions ADD COLUMN param4 REAL;"
-                "ALTER TABLE promotions ADD COLUMN param5 REAL;"
-                "ALTER TABLE promotions ADD COLUMN param6 REAL;",
-                nullptr, nullptr, &errMsg) != SQLITE_OK) {
-                LOG_ERROR(std::string("促销表迁移失败: ") + (errMsg ? errMsg : "unknown"));
+        bool tierColumnsMigrated = false;
+        for (const char* column : {"param3", "param4", "param5", "param6"}) {
+            if (hasColumn(db, "promotions", column)) continue;
+            std::string sql = "ALTER TABLE promotions ADD COLUMN " + std::string(column) + " REAL;";
+            if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                LOG_ERROR(std::string("促销表字段迁移失败（") + column + "): " + (errMsg ? errMsg : "unknown"));
                 if (errMsg) sqlite3_free(errMsg);
                 return 1;
             }
-            LOG_INFO("已迁移 promotions 表：新增阶梯折扣字段 param3~param6");
+            tierColumnsMigrated = true;
         }
+        if (tierColumnsMigrated) LOG_INFO("已迁移 promotions 表：补充缺失的阶梯折扣字段");
+
+        // 促销使用记录表：老库也需要补齐，供使用次数限制校验。
+        sqlite3_exec(db,
+            "CREATE TABLE IF NOT EXISTS order_promotions ("
+            "order_id INTEGER NOT NULL, promotion_id INTEGER NOT NULL, user_id INTEGER NOT NULL, "
+            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(order_id,promotion_id), "
+            "FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE, "
+            "FOREIGN KEY(promotion_id) REFERENCES promotions(id) ON DELETE CASCADE, "
+            "FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);",
+            nullptr, nullptr, nullptr);
 
         // ===== 阶梯折扣促销种子（老库不重插用户数据，这里单独补促销） =====
         stmt = nullptr;
@@ -283,8 +348,8 @@ int main() {
                 std::ostringstream oss;
                 oss << "运营数据概览: 订单 " << sqlite3_column_int(stmt, 0)
                     << " 笔 | 实收 ¥" << std::fixed << std::setprecision(2)
-                    << sqlite3_column_double(stmt, 1)
-                    << " | 优惠 ¥" << sqlite3_column_double(stmt, 2);
+                    << sqlite3_column_int64(stmt, 1) / 100.0
+                    << " | 优惠 ¥" << sqlite3_column_int64(stmt, 2) / 100.0;
                 LOG_INFO(oss.str());
             }
             if (stmt) sqlite3_finalize(stmt);

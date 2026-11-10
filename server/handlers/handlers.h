@@ -52,7 +52,7 @@ namespace Auth {
     // token 必须有效且绑定到指定 user_id（防伪造他人身份）
     bool requireUser(HandlerContext& ctx, const nlohmann::json& j,
                      int userId, std::string& errMsg);
-    // 管理员权限：token 有效且绑定用户 level >= 2
+    // 管理员权限：token 有效且绑定用户 role 为 admin/operator
     bool requireAdmin(HandlerContext& ctx, const nlohmann::json& j,
                       int& outUserId, std::string& errMsg);
 }
@@ -165,6 +165,38 @@ public:
 private:
     HandlerContext& ctx_;
 };
+
+class CartListHandler : public ICommandHandler {
+public:
+    explicit CartListHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+
+class CartSetQuantityHandler : public ICommandHandler {
+public:
+    explicit CartSetQuantityHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+
+class CartRemoveHandler : public ICommandHandler {
+public:
+    explicit CartRemoveHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+
+class CartClearHandler : public ICommandHandler {
+public:
+    explicit CartClearHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
 class PaymentHandler : public ICommandHandler { public: explicit PaymentHandler(HandlerContext& c):ctx_(c){} bool execute(const std::string&,std::string&) override; private: HandlerContext& ctx_; };
 class CancelOrderHandler : public ICommandHandler { public: explicit CancelOrderHandler(HandlerContext& c):ctx_(c){} bool execute(const std::string&,std::string&) override; private: HandlerContext& ctx_; };
 class ConfirmReceiptHandler : public ICommandHandler { public: explicit ConfirmReceiptHandler(HandlerContext& c):ctx_(c){} bool execute(const std::string&,std::string&) override; private: HandlerContext& ctx_; };
@@ -182,6 +214,7 @@ class CheckinHandler : public ICommandHandler { public: explicit CheckinHandler(
 class ShipmentQueryHandler : public ICommandHandler { public: explicit ShipmentQueryHandler(HandlerContext& c):ctx_(c){} bool execute(const std::string&,std::string&) override; private: HandlerContext& ctx_; };
 class ShipmentCreateHandler : public ICommandHandler { public: explicit ShipmentCreateHandler(HandlerContext& c):ctx_(c){} bool execute(const std::string&,std::string&) override; private: HandlerContext& ctx_; };
 class AdminProductHandler : public ICommandHandler { public: explicit AdminProductHandler(HandlerContext& c):ctx_(c){} bool execute(const std::string&,std::string&) override; private: HandlerContext& ctx_; };
+class AdminProductListHandler : public ICommandHandler { public: explicit AdminProductListHandler(HandlerContext& c):ctx_(c){} bool execute(const std::string&,std::string&) override; private: HandlerContext& ctx_; };
 class SkuListHandler : public ICommandHandler { public: explicit SkuListHandler(HandlerContext& c):ctx_(c){} bool execute(const std::string&,std::string&) override; private: HandlerContext& ctx_; };
 
 // ---------- 结算（核心：事务 + 库存互斥 + 促销链） ----------
@@ -255,6 +288,28 @@ public:
     bool execute(const std::string& req, std::string& resp) override;
 private:
     HandlerContext& ctx_;
+};
+class ServiceTicketsHandler : public ICommandHandler {
+public: explicit ServiceTicketsHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private: HandlerContext& ctx_;
+};
+class ServiceTicketUpdateHandler : public ICommandHandler {
+public: explicit ServiceTicketUpdateHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private: HandlerContext& ctx_;
+};
+class ReferralQueryHandler : public ICommandHandler {
+public:
+    explicit ReferralQueryHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private:
+    HandlerContext& ctx_;
+};
+class PromoAdminHandler : public ICommandHandler {
+public: explicit PromoAdminHandler(HandlerContext& ctx) : ctx_(ctx) {}
+    bool execute(const std::string& req, std::string& resp) override;
+private: HandlerContext& ctx_;
 };
 class ReturnCompleteHandler : public ICommandHandler {
 public:

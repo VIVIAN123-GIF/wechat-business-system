@@ -1,3 +1,6 @@
+// ============================================================
+// HandlerFactory.cpp - 按协议码创建对应 Handler（命令模式的工厂）
+// ============================================================
 #include "HandlerFactory.h"
 #include "../common/ProtocolHeader.h"
 
@@ -10,6 +13,10 @@ std::unique_ptr<ICommandHandler> HandlerFactory::create(uint32_t code, HandlerCo
         case C_REQ_LOGIN:          return std::make_unique<LoginHandler>(ctx);
         case C_REQ_REGISTER:       return std::make_unique<RegisterHandler>(ctx);
         case C_REQ_ADD_CART:       return std::make_unique<AddCartHandler>(ctx);
+        case C_REQ_CART_LIST:      return std::make_unique<CartListHandler>(ctx);
+        case C_REQ_CART_SET:       return std::make_unique<CartSetQuantityHandler>(ctx);
+        case C_REQ_CART_REMOVE:    return std::make_unique<CartRemoveHandler>(ctx);
+        case C_REQ_CART_CLEAR:     return std::make_unique<CartClearHandler>(ctx);
         case C_REQ_PROMO_LIST:     return std::make_unique<PromoListHandler>(ctx);
         case C_REQ_PROMO_EXPLAIN:  return std::make_unique<PromoExplainHandler>(ctx);
         case C_REQ_GROUP_CREATE:   return std::make_unique<GroupCreateHandler>(ctx);
@@ -34,6 +41,7 @@ std::unique_ptr<ICommandHandler> HandlerFactory::create(uint32_t code, HandlerCo
         case C_REQ_SHIPMENT_QUERY: return std::make_unique<ShipmentQueryHandler>(ctx);
         case C_REQ_SHIPMENT_CREATE: return std::make_unique<ShipmentCreateHandler>(ctx);
         case C_REQ_ADMIN_PRODUCT: return std::make_unique<AdminProductHandler>(ctx);
+        case C_REQ_ADMIN_PRODUCT_LIST: return std::make_unique<AdminProductListHandler>(ctx);
         case C_REQ_SKU_LIST: return std::make_unique<SkuListHandler>(ctx);
         case C_REQ_CHECKOUT:       return std::make_unique<CheckoutHandler>(ctx);
         case C_REQ_ORDER_QUERY:    return std::make_unique<OrderQueryHandler>(ctx);
@@ -41,6 +49,10 @@ std::unique_ptr<ICommandHandler> HandlerFactory::create(uint32_t code, HandlerCo
         case C_REQ_STATS:          return std::make_unique<SalesStatsHandler>(ctx);
         case C_REQ_SERVICE_MSG:    return std::make_unique<ServiceMsgHandler>(ctx);
         case C_REQ_SERVICE_REPLY:  return std::make_unique<ServiceReplyHandler>(ctx);
+        case C_REQ_SERVICE_TICKETS: return std::make_unique<ServiceTicketsHandler>(ctx);
+        case C_REQ_SERVICE_TICKET_UPDATE: return std::make_unique<ServiceTicketUpdateHandler>(ctx);
+        case C_REQ_REFERRAL_QUERY: return std::make_unique<ReferralQueryHandler>(ctx);
+        case C_REQ_PROMO_ADMIN: return std::make_unique<PromoAdminHandler>(ctx);
         case C_REQ_RETURN_LIST:    return std::make_unique<ReturnListHandler>(ctx);
         case C_REQ_RETURN_AUDIT:   return std::make_unique<ReturnAuditHandler>(ctx);
         case C_REQ_RETURN_COMPLETE:return std::make_unique<ReturnCompleteHandler>(ctx);

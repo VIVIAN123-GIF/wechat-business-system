@@ -43,6 +43,7 @@ struct User {
     std::string realName;
     std::string phone;
     int level = 1;          // 1普通 2VIP
+    std::string role = "customer";
     int points = 0;
 };
 
@@ -97,6 +98,8 @@ struct ReturnRequest {
     int origStatus = 0;       // 申请时订单原状态（审核拒绝时恢复）
     std::string applyTime;
     std::string auditTime;
+    std::string auditComment;
+    int refundAmount = 0;
 };
 
 // 促销活动
@@ -111,4 +114,9 @@ struct Promotion {
     double param5 = 0.0;      // 阶梯折扣：第3阶梯件数
     double param6 = 0.0;      // 阶梯折扣：第3阶梯折扣率
     int status = 1;
+    std::string exclusiveGroup;
+    int maxUses = 0;
+    int perUserLimit = 0;
+    std::string startTime;
+    std::string endTime;
 };

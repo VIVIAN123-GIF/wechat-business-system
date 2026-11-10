@@ -1,3 +1,6 @@
+// ============================================================
+// WorkerPool.cpp - 工作线程池：从任务队列取请求、调 Handler 执行、回写响应
+// ============================================================
 #include "WorkerPool.h"
 #include "../common/ProtocolEncoder.h"
 #include "handlers/handlers.h"
@@ -5,6 +8,7 @@
 #include "database/SQLiteHelper.h"
 
 namespace {
+// 回写响应（加发送锁，避免同连接并发写）
 int sendResponse(const Task& task, const std::vector<char>& buffer) {
     if (task.connection) {
         std::lock_guard<std::mutex> lock(task.connection->sendMutex);
@@ -24,6 +28,10 @@ uint32_t respCodeOf(uint32_t reqCode) {
         case C_REQ_LOGIN:          return S_RES_LOGIN;
         case C_REQ_REGISTER:       return S_RES_REGISTER;
         case C_REQ_ADD_CART:       return S_RES_ADD_CART;
+        case C_REQ_CART_LIST:      return S_RES_CART_LIST;
+        case C_REQ_CART_SET:       return S_RES_CART_SET;
+        case C_REQ_CART_REMOVE:    return S_RES_CART_REMOVE;
+        case C_REQ_CART_CLEAR:     return S_RES_CART_CLEAR;
         case C_REQ_PROMO_LIST:     return S_RES_PROMO_LIST;
         case C_REQ_PROMO_EXPLAIN:  return S_RES_PROMO_EXPLAIN;
         case C_REQ_GROUP_CREATE:   return S_RES_GROUP_CREATE;
@@ -48,6 +56,7 @@ uint32_t respCodeOf(uint32_t reqCode) {
         case C_REQ_SHIPMENT_QUERY: return S_RES_SHIPMENT_QUERY;
         case C_REQ_SHIPMENT_CREATE: return S_RES_SHIPMENT_CREATE;
         case C_REQ_ADMIN_PRODUCT: return S_RES_ADMIN_PRODUCT;
+        case C_REQ_ADMIN_PRODUCT_LIST: return S_RES_ADMIN_PRODUCT_LIST;
         case C_REQ_SKU_LIST: return S_RES_SKU_LIST;
         case C_REQ_CHECKOUT:       return S_RES_CHECKOUT;
         case C_REQ_ORDER_QUERY:    return S_RES_ORDER_QUERY;
@@ -55,6 +64,10 @@ uint32_t respCodeOf(uint32_t reqCode) {
         case C_REQ_STATS:          return S_RES_STATS;
         case C_REQ_SERVICE_MSG:    return S_RES_SERVICE_MSG;
         case C_REQ_SERVICE_REPLY:  return S_RES_SERVICE_REPLY;
+        case C_REQ_SERVICE_TICKETS: return S_RES_SERVICE_TICKETS;
+        case C_REQ_SERVICE_TICKET_UPDATE: return S_RES_SERVICE_TICKET_UPDATE;
+        case C_REQ_REFERRAL_QUERY: return S_RES_REFERRAL_QUERY;
+        case C_REQ_PROMO_ADMIN: return S_RES_PROMO_ADMIN;
         case C_REQ_RETURN_LIST:    return S_RES_RETURN_LIST;
         case C_REQ_RETURN_AUDIT:   return S_RES_RETURN_AUDIT;
         case C_REQ_RETURN_COMPLETE:return S_RES_RETURN_COMPLETE;
@@ -111,6 +124,11 @@ void WorkerPool::workerLoop() {
         if (!ok) {
             try {
                 auto jerr = nlohmann::json::parse(jsonResp);
+                // Keep the public generic error code, but carry the request
+                // code in the body so asynchronous clients can correlate
+                // errors when several requests are in flight.
+                jerr["_request_code"] = task.protocolCode;
+                jsonResp = jerr.dump();
                 if (jerr.value("err_code", 0) == ErrorCodes::UNAUTHORIZED) {
                     respCode = ProtocolConstants::S_ERR_UNAUTH;
                 }

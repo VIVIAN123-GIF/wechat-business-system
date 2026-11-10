@@ -33,6 +33,7 @@ public:
     // 插入订单头 + 明细（调用方需处于事务中）
     bool insert(Order& order);
     std::vector<Order> findByUserId(int userId);  // 含明细
+    std::vector<Order> findAll();                 // 全部订单（管理员后台用）
     std::shared_ptr<Order> findById(int orderId);
     bool updateStatus(int orderId, int newStatus);
     // 条件状态更新：仅当订单当前状态属于 allowed 集合时才更新（防重复退货/越权）

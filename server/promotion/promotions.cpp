@@ -1,6 +1,10 @@
+// ============================================================
+// promotions.cpp - 促销策略工厂 + 促销链组装（策略/装饰/工厂模式）
+// ============================================================
 #include "promotions.h"
 #include "../Logger.h"
 
+// 按促销 id 查库并创建对应策略对象
 std::unique_ptr<IPromotion> PromotionFactory::create(int promoId) {
     auto record = repo_->findById(promoId);
     if (!record) {

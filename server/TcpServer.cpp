@@ -1,3 +1,6 @@
+// ============================================================
+// TcpServer.cpp - TCP 接入层：监听端口、接受连接、派发任务到队列
+// ============================================================
 #include "TcpServer.h"
 #include "../common/ProtocolEncoder.h"
 #include "../common/NetUtil.h"
@@ -5,6 +8,7 @@
 #include "Logger.h"
 #include <iostream>
 
+// 全局库存锁：所有结算线程共用，防超卖
 std::mutex& TcpServer::sharedStockMutex() {
     static std::mutex mutex;
     return mutex;

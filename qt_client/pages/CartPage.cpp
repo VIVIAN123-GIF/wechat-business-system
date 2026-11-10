@@ -1,3 +1,6 @@
+// ============================================================
+// CartPage.cpp - 购物车管理（改数量 / 删除 / 清空）
+// ============================================================
 #include "CartPage.h"
 #include "../ApiClient.h"
 #include "../UiUtil.h"
@@ -40,12 +43,20 @@ CartPage::CartPage(ApiClient* api, QWidget* parent)
     root->addLayout(bottom);
 
     connect(clearBtn, &QPushButton::clicked, this, [this]{
-        api_->cartClear();
-        rebuild();
+        api_->clearCart([this](quint32 code, const json& result) {
+            if (code == 2014) api_->cartClear();
+            else showTransient(totalLbl_, errMsg(result));
+            rebuild();
+        });
     });
 }
 
-void CartPage::refresh() { rebuild(); }
+void CartPage::refresh() {
+    api_->fetchCart([this](quint32 code, const json& result) {
+        if (code == 2011) api_->cartReplace(result.value("items", json::array()));
+        rebuild();
+    });
+}
 
 void CartPage::rebuild() {
     table_->setRowCount(0);
@@ -70,14 +81,21 @@ void CartPage::rebuild() {
         table_->setCellWidget(row, 5, delBtn);
 
         int pid = l.productId;
+        int sid = l.skuId;
         connect(spin, QOverload<int>::of(&QSpinBox::valueChanged),
-                this, [this, pid](int v) {
-            api_->cartSetQty(pid, v);
-            rebuild();
+                this, [this, pid, sid](int v) {
+            api_->setCartQuantity(pid, sid, v, [this, pid, sid, v](quint32 code, const json& result) {
+                if (code == 2012) api_->cartSetQty(pid, v, sid);
+                else showTransient(totalLbl_, errMsg(result));
+                rebuild();
+            });
         });
-        connect(delBtn, &QPushButton::clicked, this, [this, pid]{
-            api_->cartRemove(pid);
-            rebuild();
+        connect(delBtn, &QPushButton::clicked, this, [this, pid, sid]{
+            api_->removeCartItem(pid, sid, [this, pid, sid](quint32 code, const json& result) {
+                if (code == 2013) api_->cartRemove(pid, sid);
+                else showTransient(totalLbl_, errMsg(result));
+                rebuild();
+            });
         });
     }
 

@@ -1,8 +1,10 @@
+// ============================================================
+// NetworkClient.cpp - Qt 异步网络层（QTcpSocket 收发 + 粘包处理）
+// ============================================================
 #include "NetworkClient.h"
 #include <QTcpSocket>
 #include <QDataStream>
 #include <QAbstractSocket>
-
 static constexpr quint32 kMagic   = 0x4D495F53;  // "MI_S"
 static constexpr quint32 kVersion = 0x00000001;
 static constexpr int     kHeaderSize = 16;
@@ -17,7 +19,11 @@ NetworkClient::NetworkClient(QObject* parent)
 }
 
 void NetworkClient::connectToServer(const QString& host, quint16 port) {
-    socket_->abort();
+    // 新建的 QTcpSocket 处于 UnconnectedState 时调用 abort() 会在 Qt 6.12
+    // 触发一次无效 socket 错误信号，导致登录页误报连接失败。
+    if (socket_->state() != QAbstractSocket::UnconnectedState) {
+        socket_->abort();
+    }
     inBuffer_.clear();
     socket_->connectToHost(host, port);
 }

@@ -1,3 +1,6 @@
+// ============================================================
+// MainWindow.cpp - 主窗口：登录/主界面切换、左侧导航栏、主题切换
+// ============================================================
 #include "MainWindow.h"
 #include "ApiClient.h"
 #include "NetworkClient.h"
@@ -13,6 +16,7 @@
 #include "pages/NotificationPage.h"
 #include "pages/FavoritesPage.h"
 #include "pages/AdminPage.h"
+#include "pages/ReferralPage.h"
 #include "UiUtil.h"
 #include <QStackedWidget>
 #include <QLabel>
@@ -22,6 +26,8 @@
 #include <QApplication>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QTimer>
+#include <QList>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), api_(new ApiClient(this)) {
@@ -52,6 +58,7 @@ void MainWindow::buildMainUi() {
     notificationPage_ = new NotificationPage(api_);
     favoritesPage_ = new FavoritesPage(api_);
     adminPage_ = new AdminPage(api_);
+    referralPage_ = new ReferralPage(api_);
 
     auto* mainWidget = new QWidget;
     auto* root = new QVBoxLayout(mainWidget);
@@ -64,6 +71,8 @@ void MainWindow::buildMainUi() {
     QFont tf = title->font(); tf.setBold(true); tf.setPointSize(12);
     title->setFont(tf);
     userLbl_ = new QLabel;
+    noticeLbl_ = new QLabel;
+    noticeLbl_->setStyleSheet("color:#2563eb;");
     themeCombo_ = new QComboBox;
     themeCombo_->addItem(QStringLiteral("绿色主题"), "green");
     themeCombo_->addItem(QStringLiteral("蓝色主题"), "blue");
@@ -73,6 +82,7 @@ void MainWindow::buildMainUi() {
     top->addWidget(title);
     top->addStretch();
     top->addWidget(userLbl_);
+    top->addWidget(noticeLbl_);
     top->addWidget(new QLabel(QStringLiteral("主题：")));
     top->addWidget(themeCombo_);
     top->addWidget(logoutBtn);
@@ -106,15 +116,22 @@ void MainWindow::buildMainUi() {
     pageStack_->addWidget(notificationPage_);
     pageStack_->addWidget(favoritesPage_);
     pageStack_->addWidget(adminPage_);
+    pageStack_->addWidget(referralPage_);
 
+    QList<QPushButton*> navButtons;
     for (const auto& it : items) {
         auto* b = new QPushButton(QString::fromUtf8(it.name));
         b->setCheckable(true);
+        b->setObjectName("sideNavButton");
+        b->setProperty("sideNavButton", true);
+        navButtons.push_back(b);
         b->setMinimumHeight(40);
         nav->addWidget(b);
         connect(b, &QPushButton::clicked, this, [this, it, b] {
             pageStack_->setCurrentIndex(it.index);
-            for (auto* o : b->parentWidget()->findChildren<QPushButton*>()) o->setChecked(false);
+            for (auto* o : findChildren<QPushButton*>()) {
+                if (o->property("sideNavButton").toBool()) o->setChecked(false);
+            }
             b->setChecked(true);
             // 进入页面时刷新
             switch (it.index) {
@@ -128,18 +145,30 @@ void MainWindow::buildMainUi() {
             }
         });
     }
+    if (!navButtons.isEmpty()) navButtons.front()->setChecked(true);
     auto* couponNav = new QPushButton(QStringLiteral("领券中心"));
+    couponNav->setCheckable(true); couponNav->setObjectName("sideNavButton"); couponNav->setProperty("sideNavButton", true); navButtons.push_back(couponNav);
     nav->addWidget(couponNav);
-    connect(couponNav, &QPushButton::clicked, this, [this] { pageStack_->setCurrentWidget(couponPage_); couponPage_->refresh(); });
+    connect(couponNav, &QPushButton::clicked, this, [this, couponNav] { for (auto* b : findChildren<QPushButton*>()) if (b->property("sideNavButton").toBool()) b->setChecked(false); couponNav->setChecked(true); pageStack_->setCurrentWidget(couponPage_); couponPage_->refresh(); });
     auto* notificationNav = new QPushButton(QStringLiteral("消息通知"));
+    notificationNav->setCheckable(true); notificationNav->setObjectName("sideNavButton"); notificationNav->setProperty("sideNavButton", true); navButtons.push_back(notificationNav);
     nav->addWidget(notificationNav);
-    connect(notificationNav, &QPushButton::clicked, this, [this] { pageStack_->setCurrentWidget(notificationPage_); notificationPage_->refresh(); });
+    connect(notificationNav, &QPushButton::clicked, this, [this, notificationNav] { for (auto* b : findChildren<QPushButton*>()) if (b->property("sideNavButton").toBool()) b->setChecked(false); notificationNav->setChecked(true); pageStack_->setCurrentWidget(notificationPage_); notificationPage_->refresh(); });
     auto* favoritesNav = new QPushButton(QStringLiteral("我的收藏"));
+    favoritesNav->setCheckable(true); favoritesNav->setObjectName("sideNavButton"); favoritesNav->setProperty("sideNavButton", true); navButtons.push_back(favoritesNav);
     nav->addWidget(favoritesNav);
-    connect(favoritesNav, &QPushButton::clicked, this, [this] { pageStack_->setCurrentWidget(favoritesPage_); favoritesPage_->refresh(); });
+    connect(favoritesNav, &QPushButton::clicked, this, [this, favoritesNav] { for (auto* b : findChildren<QPushButton*>()) if (b->property("sideNavButton").toBool()) b->setChecked(false); favoritesNav->setChecked(true); pageStack_->setCurrentWidget(favoritesPage_); favoritesPage_->refresh(); });
     auto* adminNav = new QPushButton(QStringLiteral("卖家管理"));
+    adminNav->setCheckable(true); adminNav->setObjectName("sideNavButton"); adminNav->setProperty("sideNavButton", true); navButtons.push_back(adminNav);
     adminNav->setVisible(false); nav->addWidget(adminNav);
-    connect(adminNav, &QPushButton::clicked, this, [this] { pageStack_->setCurrentWidget(adminPage_); adminPage_->refresh(); });
+    connect(adminNav, &QPushButton::clicked, this, [this, adminNav] { for (auto* b : findChildren<QPushButton*>()) if (b->property("sideNavButton").toBool()) b->setChecked(false); adminNav->setChecked(true); pageStack_->setCurrentWidget(adminPage_); adminPage_->refresh(); });
+    auto* referralNav = new QPushButton(QStringLiteral("我的分销"));
+    referralNav->setCheckable(true); referralNav->setObjectName("sideNavButton"); referralNav->setProperty("sideNavButton", true);
+    navButtons.push_back(referralNav); nav->addWidget(referralNav);
+    connect(referralNav, &QPushButton::clicked, this, [this, referralNav] {
+        for (auto* b : findChildren<QPushButton*>()) if (b->property("sideNavButton").toBool()) b->setChecked(false);
+        referralNav->setChecked(true); pageStack_->setCurrentWidget(referralPage_); referralPage_->refresh();
+    });
     nav->addStretch();
 
     auto* navWidget = new QWidget;
@@ -155,7 +184,8 @@ void MainWindow::buildMainUi() {
     connect(logoutBtn, &QPushButton::clicked, this, &MainWindow::logout);
     connect(checkinBtn, &QPushButton::clicked, this, [this] {
         api_->checkIn([this](quint32 code, const json& result) {
-            userLbl_->setText(code == 2170 ? QStringLiteral("签到成功，获得 %1 积分").arg(result.value("points_awarded", 0)) : errMsg(result));
+            noticeLbl_->setText(code == 2170 ? QStringLiteral("签到成功，获得 %1 积分").arg(result.value("points_awarded", 0)) : errMsg(result));
+            QTimer::singleShot(3500, this, [this] { noticeLbl_->clear(); });
         });
     });
 
@@ -167,7 +197,11 @@ void MainWindow::onLogin() {
         .arg(api_->username())
         .arg(api_->isAdmin() ? QStringLiteral("管理员") : QStringLiteral("普通用户")));
     rootStack_->setCurrentIndex(1);
-    for (auto* button : findChildren<QPushButton*>()) if (button->text() == QStringLiteral("卖家管理")) button->setVisible(api_->isAdmin());
+    for (auto* button : findChildren<QPushButton*>()) {
+        if (button->text() == QStringLiteral("销售统计")) button->setVisible(api_->isAdmin());
+        if (button->text() == QStringLiteral("联系客服")) button->setVisible(!api_->isAdmin());
+        if (button->text() == QStringLiteral("卖家管理")) button->setVisible(api_->isAdmin());
+    }
     shopPage_->refresh();
     notificationPage_->refresh();
     applyTheme("green");

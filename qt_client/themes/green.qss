@@ -8,6 +8,7 @@ QPushButton {
 }
 QPushButton:hover { background-color:#15803d; }
 QPushButton:checked { background-color:#14532d; }
+QPushButton#sideNavButton:checked { background-color:#14532d; color:white; }
 QPushButton:disabled { background-color:#cbd5e1; color:#64748b; }
 
 QLineEdit, QSpinBox, QComboBox {

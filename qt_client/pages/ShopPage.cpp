@@ -1,3 +1,6 @@
+// ============================================================
+// ShopPage.cpp - 商品列表 / 搜索 / 详情 / 加购
+// ============================================================
 #include "ShopPage.h"
 #include "../ApiClient.h"
 #include "../UiUtil.h"
@@ -84,6 +87,8 @@ ShopPage::ShopPage(ApiClient* api, QWidget* parent)
     dReviews_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
     right->addWidget(new QLabel(QStringLiteral("商品评价：")));
     right->addWidget(dReviews_);
+    auto* refreshReviewsBtn = new QPushButton(QStringLiteral("刷新评价"));
+    right->addWidget(refreshReviewsBtn);
 
     auto* addRow = new QHBoxLayout;
     auto* shareBtn = new QPushButton(QStringLiteral("分享给好友"));
@@ -99,6 +104,24 @@ ShopPage::ShopPage(ApiClient* api, QWidget* parent)
     addRow->addWidget(qtySpin_);
     addRow->addWidget(addBtn_);
     right->addLayout(addRow);
+    auto* groupRow = new QHBoxLayout;
+    groupTargetSpin_ = new QSpinBox;
+    groupTargetSpin_->setRange(2, 20); groupTargetSpin_->setValue(2);
+    groupHoursSpin_ = new QSpinBox;
+    groupHoursSpin_->setRange(1, 168); groupHoursSpin_->setValue(24);
+    createGroupBtn_ = new QPushButton(QStringLiteral("发起拼团"));
+    groupRow->addWidget(new QLabel(QStringLiteral("拼团人数")));
+    groupRow->addWidget(groupTargetSpin_);
+    groupRow->addWidget(new QLabel(QStringLiteral("有效小时")));
+    groupRow->addWidget(groupHoursSpin_);
+    groupRow->addWidget(createGroupBtn_);
+    right->addLayout(groupRow);
+    groupTable_ = new QTableWidget(0, 4);
+    groupTable_->setHorizontalHeaderLabels({QStringLiteral("拼团编号"), QStringLiteral("进度"), QStringLiteral("截止时间"), QStringLiteral("操作")});
+    groupTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    groupTable_->verticalHeader()->setVisible(false);
+    groupTable_->horizontalHeader()->setStretchLastSection(true);
+    right->addWidget(groupTable_);
     right->addStretch();
 
     root->addLayout(right, 2);
@@ -111,12 +134,13 @@ ShopPage::ShopPage(ApiClient* api, QWidget* parent)
         if (!sel.isEmpty()) showDetail(sel.first()->text().toInt());
     });
     connect(addBtn_, &QPushButton::clicked, this, &ShopPage::addToCart);
+    connect(createGroupBtn_, &QPushButton::clicked, this, &ShopPage::createGroup);
     connect(skuBox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
         currentSkuId_ = skuBox_->currentData().toInt();
         currentSkuPrice_ = currentPrice_;
         if (currentSkuId_ <= 0) {
             currentStock_ = currentProductStock_;
-            dPrice_->setText("楼" + yuan(currentPrice_));
+            dPrice_->setText(QStringLiteral("¥") + yuan(currentPrice_));
             qtySpin_->setMaximum(std::max(1, currentStock_));
             addBtn_->setEnabled(currentStock_ > 0);
             return;
@@ -127,7 +151,7 @@ ShopPage::ShopPage(ApiClient* api, QWidget* parent)
                 if (sku.value("sku_id", 0) != currentSkuId_) continue;
                 currentSkuPrice_ = currentPrice_ + sku.value("price_delta", 0);
                 currentStock_ = sku.value("stock", 0);
-                dPrice_->setText("楼" + yuan(currentSkuPrice_));
+                dPrice_->setText(QStringLiteral("¥") + yuan(currentSkuPrice_));
                 qtySpin_->setMaximum(std::max(1, currentStock_));
                 addBtn_->setEnabled(currentStock_ > 0);
                 break;
@@ -143,6 +167,21 @@ ShopPage::ShopPage(ApiClient* api, QWidget* parent)
     connect(favoriteBtn, &QPushButton::clicked, this, [this] {
         api_->toggleFavorite(currentPid_, [this](quint32 code, const json& result) {
             dDesc_->setText(code == 2161 ? (result.value("favorite", false) ? QStringLiteral("已收藏商品") : QStringLiteral("已取消收藏")) : errMsg(result));
+        });
+    });
+    connect(refreshReviewsBtn, &QPushButton::clicked, this, [this] {
+        if (currentPid_ <= 0) return;
+        api_->fetchReviews(currentPid_, [this](quint32 code, const json& result) {
+            if (code != 2131) { showTransient(dReviews_, errMsg(result)); return; }
+            QString text = QStringLiteral("平均分：%1（%2 条）")
+                .arg(result.value("review_average", 0.0)).arg(result.value("review_count", 0));
+            for (const auto& review : result.value("reviews", json::array())) {
+                text += QStringLiteral("\n%1：%2 分 %3")
+                    .arg(QString::fromStdString(review.value("username", "匿名")))
+                    .arg(review.value("rating", 0))
+                    .arg(QString::fromStdString(review.value("content", "")));
+            }
+            dReviews_->setText(text);
         });
     });
 }
@@ -221,6 +260,7 @@ void ShopPage::showDetail(int pid) {
         qtySpin_->setMaximum(currentStock_ > 0 ? currentStock_ : 1);
         qtySpin_->setValue(1);
         addBtn_->setEnabled(currentStock_ > 0);
+        loadGroups();
     });
 }
 
@@ -240,5 +280,43 @@ void ShopPage::addToCart() {
         } else {
             dDesc_->setText(errMsg(j));
         }
+    }, currentSkuId_);
+}
+
+void ShopPage::loadGroups() {
+    groupTable_->setRowCount(0);
+    if (currentPid_ <= 0) return;
+    api_->fetchGroups([this](quint32 code, const json& j) {
+        if (code != 2093) return;
+        for (const auto& g : j.value("groups", json::array())) {
+            if (g.value("product_id", 0) != currentPid_) continue;
+            int row = groupTable_->rowCount(); groupTable_->insertRow(row);
+            groupTable_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(g.value("group_no", ""))));
+            groupTable_->setItem(row, 1, new QTableWidgetItem(QStringLiteral("%1/%2").arg(g.value("member_count", 0)).arg(g.value("target_count", 0))));
+            groupTable_->setItem(row, 2, new QTableWidgetItem(QString::fromStdString(g.value("deadline", ""))));
+            auto* join = new QPushButton(QStringLiteral("加入"));
+            groupTable_->setCellWidget(row, 3, join);
+            int groupId = g.value("group_id", 0);
+            connect(join, &QPushButton::clicked, this, [this, groupId] {
+                api_->joinGroup(groupId, [this](quint32 joinCode, const json& result) {
+                    if (joinCode == 2092) {
+                        showTransient(dDesc_, result.value("status", 0) == 1 ? QStringLiteral("拼团成功，请到我的订单完成支付") : QStringLiteral("加入拼团成功"));
+                        loadGroups();
+                    } else showTransient(dDesc_, errMsg(result));
+                });
+            });
+        }
+    });
+}
+
+void ShopPage::createGroup() {
+    if (currentPid_ <= 0) return;
+    createGroupBtn_->setEnabled(false);
+    api_->createGroup(currentPid_, groupTargetSpin_->value(), groupHoursSpin_->value(), [this](quint32 code, const json& result) {
+        createGroupBtn_->setEnabled(true);
+        if (code == 2091) {
+            showTransient(dDesc_, QStringLiteral("拼团已创建：%1").arg(QString::fromStdString(result.value("group_no", ""))));
+            loadGroups();
+        } else showTransient(dDesc_, errMsg(result));
     });
 }

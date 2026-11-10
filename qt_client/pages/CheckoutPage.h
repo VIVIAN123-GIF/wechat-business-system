@@ -1,15 +1,16 @@
-// ============================================================
-// CheckoutPage.h - 促销选择 + 结算
-// ============================================================
 #pragma once
-#include <QWidget>
 
-class QTableWidget;
+#include <QWidget>
+#include <cstdint>
+#include <vector>
+
+class QComboBox;
 class QLabel;
 class QPushButton;
-class QListWidget;
-class QComboBox;
+class QSpinBox;
+class QTableWidget;
 class ApiClient;
+struct CartLine;
 
 class CheckoutPage : public QWidget {
     Q_OBJECT
@@ -21,13 +22,20 @@ private:
     ApiClient* api_;
     QTableWidget* table_;
     QLabel* origLbl_;
+    QLabel* recommendationLbl_;
     QLabel* resultLbl_;
-    QListWidget* promoList_;
     QPushButton* checkoutBtn_;
     QComboBox* addressBox_;
-    QComboBox* couponBox_;
+    bool cartReady_ = false;
+    bool addressReady_ = false;
+    bool recommendationReady_ = false;
+    bool recommendationOk_ = false;
+    std::uint64_t requestSerial_ = 0;
+    std::uint64_t recommendationSerial_ = 0;
 
-    void loadPromotions();
-    void loadAddresses();
     void doCheckout();
+    void loadAddresses(std::uint64_t serial);
+    void recommendPromotions(std::uint64_t serial);
+    void updateCheckoutState();
+    std::vector<CartLine> selectedLines() const;
 };

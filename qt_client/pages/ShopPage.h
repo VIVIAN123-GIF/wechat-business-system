@@ -35,6 +35,10 @@ private:
     QComboBox* sortBox_;
     QComboBox* skuBox_;
     QPushButton* addBtn_;
+    QSpinBox* groupTargetSpin_;
+    QSpinBox* groupHoursSpin_;
+    QPushButton* createGroupBtn_;
+    QTableWidget* groupTable_;
 
     int currentPid_ = 0;
     int currentStock_ = 0;
@@ -48,4 +52,6 @@ private:
     void doSearch();
     void showDetail(int pid);
     void addToCart();
+    void loadGroups();
+    void createGroup();
 };

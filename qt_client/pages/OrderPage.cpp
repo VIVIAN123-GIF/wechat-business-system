@@ -1,3 +1,6 @@
+// ============================================================
+// OrderPage.cpp - 订单查询 + 申请退货
+// ============================================================
 #include "OrderPage.h"
 #include "../ApiClient.h"
 #include "../UiUtil.h"
@@ -6,7 +9,9 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QInputDialog>
+#include <QComboBox>
 #include <QVBoxLayout>
+#include <QMessageBox>
 
 OrderPage::OrderPage(ApiClient* api, QWidget* parent)
     : QWidget(parent), api_(api) {
@@ -15,6 +20,14 @@ OrderPage::OrderPage(ApiClient* api, QWidget* parent)
 
     auto* top = new QHBoxLayout;
     top->addWidget(new QLabel(QStringLiteral("我的订单")));
+    statusFilter_ = new QComboBox;
+    statusFilter_->addItem(QStringLiteral("全部状态"), -1);
+    statusFilter_->addItem(QStringLiteral("待支付"), 0);
+    statusFilter_->addItem(QStringLiteral("已支付"), 1);
+    statusFilter_->addItem(QStringLiteral("已发货"), 2);
+    statusFilter_->addItem(QStringLiteral("已完成"), 3);
+    statusFilter_->addItem(QStringLiteral("已取消"), 4);
+    top->addWidget(statusFilter_);
     top->addStretch();
     auto* refreshBtn = new QPushButton(QStringLiteral("刷新"));
     top->addWidget(refreshBtn);
@@ -47,6 +60,11 @@ OrderPage::OrderPage(ApiClient* api, QWidget* parent)
     root->addWidget(tipLabel_);
 
     connect(refreshBtn, &QPushButton::clicked, this, &OrderPage::refresh);
+    connect(statusFilter_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        const int filter = statusFilter_->currentData().toInt();
+        for (int row = 0; row < orderTable_->rowCount(); ++row)
+            orderTable_->setRowHidden(row, filter >= 0 && orderTable_->item(row, 0)->data(Qt::UserRole + 1).toInt() != filter);
+    });
     connect(orderTable_, &QTableWidget::itemSelectionChanged, this, [this]() {
         auto sel = orderTable_->selectedItems();
         if (sel.isEmpty()) return;
@@ -98,6 +116,7 @@ void OrderPage::loadOrders() {
             // 明细 JSON 存到 UserRole，供选中时展示
             json items = o.value("items", json::array());
             noItem->setData(Qt::UserRole, QString::fromStdString(items.dump()));
+            noItem->setData(Qt::UserRole + 1, status);
             orderTable_->setItem(row, 0, noItem);
             orderTable_->setItem(row, 1, new QTableWidgetItem(
                 "¥" + yuan(o.value("original", 0))));
@@ -125,34 +144,73 @@ void OrderPage::loadOrders() {
             actionLayout->setContentsMargins(0, 0, 0, 0);
             actionLayout->addWidget(retBtn);
             actionLayout->addWidget(actionBtn);
+            QPushButton* logBtn = nullptr;
+            if (status >= 1) {
+                logBtn = new QPushButton(QStringLiteral("物流"));
+                actionLayout->addWidget(logBtn);
+            }
+            auto* auditBtn = new QPushButton(QStringLiteral("操作记录"));
+            actionLayout->addWidget(auditBtn);
             QPushButton* cancelBtn = nullptr;
             if (status == 0) {
                 cancelBtn = new QPushButton(QStringLiteral("取消订单"));
                 actionLayout->addWidget(cancelBtn);
             }
             orderTable_->setCellWidget(row, 6, actionCell);
+            connect(auditBtn, &QPushButton::clicked, this, [this, orderId] {
+                api_->fetchOrderAudit(orderId, [this](quint32 code, const json& j) {
+                    if (code != 2096) { showTransient(tipLabel_, errMsg(j)); return; }
+                    QString text;
+                    for (const auto& a : j.value("audit", json::array())) text += QStringLiteral("%1　%2　%3 -> %4\n%5\n\n")
+                        .arg(QString::fromStdString(a.value("created_at", ""))).arg(QString::fromStdString(a.value("action", "")))
+                        .arg(a.value("from_status", 0)).arg(a.value("to_status", 0)).arg(QString::fromStdString(a.value("detail", "")));
+                    QMessageBox::information(this, QStringLiteral("订单操作记录"), text.isEmpty() ? QStringLiteral("暂无记录") : text);
+                });
+            });
             connect(actionBtn, &QPushButton::clicked, this, [this, orderId, status, items]{
                 if (status == 0) {
-                    api_->payOrder(orderId, [this](quint32 code, const json& j) { tipLabel_->setText(code == 2100 ? QStringLiteral("支付成功") : errMsg(j)); loadOrders(); });
+                    api_->payOrder(orderId, [this](quint32 code, const json& j) { showTransient(tipLabel_, code == 2100 ? QStringLiteral("支付成功") : errMsg(j)); loadOrders(); });
                 } else if (status == 2) {
-                    api_->confirmReceipt(orderId, [this](quint32 code, const json& j) { tipLabel_->setText(code == 2110 ? QStringLiteral("确认收货成功") : errMsg(j)); loadOrders(); });
+                    api_->confirmReceipt(orderId, [this](quint32 code, const json& j) { showTransient(tipLabel_, code == 2110 ? QStringLiteral("确认收货成功") : errMsg(j)); loadOrders(); });
                 } else if (status == 3 && !items.empty()) {
                     bool ok = false;
                     int rating = QInputDialog::getInt(this, QStringLiteral("商品评价"), QStringLiteral("评分（1-5）："), 5, 1, 5, 1, &ok);
                     if (!ok) return;
                     QString content = QInputDialog::getText(this, QStringLiteral("商品评价"), QStringLiteral("评价内容："), QLineEdit::Normal, {}, &ok);
                     if (!ok) return;
+                    QString image = QInputDialog::getText(this, QStringLiteral("图片凭证"), QStringLiteral("图片地址（可选，需 http(s)）："), QLineEdit::Normal, {}, &ok);
+                    if (!ok) return;
                     int productId = items.front().value("product_id", 0);
-                    api_->createReview(orderId, productId, rating, content, [this](quint32 code, const json& j) { tipLabel_->setText(code == 2130 ? QStringLiteral("评价成功") : errMsg(j)); });
+                    api_->createReview(orderId, productId, rating, content, image, [this](quint32 code, const json& j) { showTransient(tipLabel_, code == 2130 ? QStringLiteral("评价成功") : errMsg(j)); });
                 }
             });
             connect(retBtn, &QPushButton::clicked, this, [this, orderId]{
                 applyReturn(orderId);
             });
+            if (logBtn) {
+                connect(logBtn, &QPushButton::clicked, this, [this, orderId] {
+                    api_->fetchShipment(orderId, [this](quint32 code, const json& j) {
+                        if (code != 2180) { showTransient(tipLabel_, errMsg(j)); return; }
+                        QString no = QString::fromStdString(j.value("tracking_no", ""));
+                        if (no.isEmpty()) {
+                            QMessageBox::information(this, QStringLiteral("物流查询"),
+                                QStringLiteral("商家暂未发货，暂无物流信息"));
+                            return;
+                        }
+                        int st = j.value("status", -1);
+                        static const char* stText[] = {"已揽收", "运输中", "派送中"};
+                        QString stStr = (st >= 0 && st <= 2)
+                            ? QString::fromUtf8(stText[st]) : QStringLiteral("状态未知");
+                        QMessageBox::information(this, QStringLiteral("物流查询"),
+                            QStringLiteral("运单号：%1\n物流状态：%2\n更新时间：%3")
+                                .arg(no, stStr, QString::fromStdString(j.value("updated_at", ""))));
+                    });
+                });
+            }
             if (cancelBtn) {
                 connect(cancelBtn, &QPushButton::clicked, this, [this, orderId] {
                     api_->cancelOrder(orderId, [this](quint32 code, const json& j) {
-                        tipLabel_->setText(code == 2101 ? QStringLiteral("订单已取消") : errMsg(j));
+                        showTransient(tipLabel_, code == 2101 ? QStringLiteral("订单已取消") : errMsg(j));
                         loadOrders();
                     });
                 });
@@ -171,11 +229,11 @@ void OrderPage::applyReturn(int orderId) {
     api_->applyReturn(orderId, reason, [this](quint32 code, const json& j) {
         if (code == 2050) {
             tipLabel_->setStyleSheet("color:#15803d;");
-            tipLabel_->setText(QStringLiteral("退货申请已提交，等待审核"));
+            showTransient(tipLabel_, QStringLiteral("退货申请已提交，等待审核"));
             loadOrders();
         } else {
             tipLabel_->setStyleSheet("color:#dc2626;");
-            tipLabel_->setText(errMsg(j));
+            showTransient(tipLabel_, errMsg(j));
         }
     });
 }

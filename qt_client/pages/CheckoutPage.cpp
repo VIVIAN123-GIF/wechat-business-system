@@ -1,182 +1,244 @@
+// CheckoutPage.cpp - promotion preview and checkout
 #include "CheckoutPage.h"
 #include "../ApiClient.h"
 #include "../UiUtil.h"
-#include <QTableWidget>
-#include <QHeaderView>
-#include <QLabel>
-#include <QPushButton>
-#include <QListWidget>
+
+#include <QCheckBox>
 #include <QComboBox>
 #include <QInputDialog>
-#include <QVBoxLayout>
+#include <QLabel>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <QHBoxLayout>
-#include <algorithm>
+#include <QVBoxLayout>
 
 CheckoutPage::CheckoutPage(ApiClient* api, QWidget* parent)
     : QWidget(parent), api_(api) {
-
     auto* root = new QVBoxLayout(this);
 
-    // 购物车预览
-    table_ = new QTableWidget(0, 4);
-    table_->setHorizontalHeaderLabels(
-        {QStringLiteral("ID"), QStringLiteral("名称"),
-         QStringLiteral("数量"), QStringLiteral("小计")});
+    table_ = new QTableWidget(0, 5, this);
+    table_->setHorizontalHeaderLabels({QStringLiteral("购买"), QStringLiteral("ID"), QStringLiteral("名称"), QStringLiteral("数量"), QStringLiteral("小计")});
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->verticalHeader()->setVisible(false);
     table_->horizontalHeader()->setStretchLastSection(true);
-    table_->setColumnWidth(1, 240);
+    table_->setColumnWidth(0, 60);
+    table_->setColumnWidth(2, 240);
     root->addWidget(table_);
 
-    origLbl_ = new QLabel;
-    QFont f = origLbl_->font(); f.setBold(true);
-    origLbl_->setFont(f);
+    origLbl_ = new QLabel(this);
+    QFont font = origLbl_->font();
+    font.setBold(true);
+    origLbl_->setFont(font);
     root->addWidget(origLbl_);
 
+    recommendationLbl_ = new QLabel(this);
+    recommendationLbl_->setWordWrap(true);
+    recommendationLbl_->setStyleSheet("color:#166534;");
+    root->addWidget(recommendationLbl_);
+
     auto* addressRow = new QHBoxLayout;
-    addressRow->addWidget(new QLabel(QStringLiteral("收货地址：")));
-    addressBox_ = new QComboBox;
+    addressRow->addWidget(new QLabel(QStringLiteral("收货地址："), this));
+    addressBox_ = new QComboBox(this);
     addressRow->addWidget(addressBox_, 1);
-    auto* addAddressBtn = new QPushButton(QStringLiteral("新增地址"));
+    auto* addAddressBtn = new QPushButton(QStringLiteral("新增地址"), this);
     addressRow->addWidget(addAddressBtn);
     root->addLayout(addressRow);
-    auto* couponRow = new QHBoxLayout;
-    couponRow->addWidget(new QLabel(QStringLiteral("我的优惠券：")));
-    couponBox_ = new QComboBox;
-    couponBox_->addItem(QStringLiteral("不使用优惠券"), 0);
-    couponRow->addWidget(couponBox_, 1);
-    root->addLayout(couponRow);
-    connect(addAddressBtn, &QPushButton::clicked, this, [this] {
-        bool ok = false;
-        QString receiver = QInputDialog::getText(this, QStringLiteral("新增地址"), QStringLiteral("收货人："), QLineEdit::Normal, {}, &ok);
-        if (!ok || receiver.trimmed().isEmpty()) return;
-        QString phone = QInputDialog::getText(this, QStringLiteral("新增地址"), QStringLiteral("手机号："), QLineEdit::Normal, {}, &ok);
-        if (!ok || phone.trimmed().isEmpty()) return;
-        QString detail = QInputDialog::getText(this, QStringLiteral("新增地址"), QStringLiteral("详细地址："), QLineEdit::Normal, {}, &ok);
-        if (!ok || detail.trimmed().isEmpty()) return;
-        api_->createAddress(receiver, phone, detail, addressBox_->count() == 0, [this](quint32 code, const json& j) { if (code == 2121) loadAddresses(); else resultLbl_->setText(errMsg(j)); });
-    });
 
-    root->addWidget(new QLabel(QStringLiteral("选择促销（可多选，自动去重）：")));
-    promoList_ = new QListWidget;
-    root->addWidget(promoList_);
-
-    checkoutBtn_ = new QPushButton(QStringLiteral("提交结算"));
+    checkoutBtn_ = new QPushButton(QStringLiteral("提交结算"), this);
+    checkoutBtn_->setEnabled(false);
     root->addWidget(checkoutBtn_);
 
-    resultLbl_ = new QLabel;
+    resultLbl_ = new QLabel(this);
     resultLbl_->setWordWrap(true);
-    resultLbl_->setStyleSheet("color:#15803d;");
     root->addWidget(resultLbl_);
 
+    connect(addressBox_, &QComboBox::currentIndexChanged, this, [this](int) { updateCheckoutState(); });
     connect(checkoutBtn_, &QPushButton::clicked, this, &CheckoutPage::doCheckout);
+    connect(addAddressBtn, &QPushButton::clicked, this, [this] {
+        bool ok = false;
+        const QString receiver = QInputDialog::getText(this, QStringLiteral("新增地址"), QStringLiteral("收货人："), QLineEdit::Normal, {}, &ok);
+        if (!ok || receiver.trimmed().isEmpty()) return;
+        const QString phone = QInputDialog::getText(this, QStringLiteral("新增地址"), QStringLiteral("手机号："), QLineEdit::Normal, {}, &ok);
+        if (!ok || phone.trimmed().isEmpty()) return;
+        const QString detail = QInputDialog::getText(this, QStringLiteral("新增地址"), QStringLiteral("详细地址："), QLineEdit::Normal, {}, &ok);
+        if (!ok || detail.trimmed().isEmpty()) return;
+        api_->createAddress(receiver, phone, detail, addressBox_->count() == 0,
+            [this](quint32 code, const json& result) {
+                if (code == 2121) loadAddresses(requestSerial_);
+                else showTransient(resultLbl_, errMsg(result));
+            });
+    });
 }
 
 void CheckoutPage::refresh() {
-    resultLbl_->setText("");
-    table_->setRowCount(0);
-    for (const auto& l : api_->cart()) {
-        int row = table_->rowCount();
-        table_->insertRow(row);
-        table_->setItem(row, 0, new QTableWidgetItem(QString::number(l.productId)));
-        table_->setItem(row, 1, new QTableWidgetItem(l.name));
-        table_->setItem(row, 2, new QTableWidgetItem(QString::number(l.quantity)));
-        table_->setItem(row, 3, new QTableWidgetItem(
-            "¥" + yuan(l.priceCents * l.quantity)));
-    }
-    origLbl_->setText(QStringLiteral("商品原价合计：¥%1").arg(yuan(api_->cartTotalCents())));
-    loadPromotions();
-}
+    const auto serial = ++requestSerial_;
+    cartReady_ = false;
+    addressReady_ = false;
+    recommendationReady_ = false;
+    recommendationOk_ = false;
+    ++recommendationSerial_;
+    checkoutBtn_->setEnabled(false);
+    resultLbl_->clear();
+    recommendationLbl_->setText(QStringLiteral("正在加载结算信息…"));
 
-void CheckoutPage::loadAddresses() {
-    api_->fetchAddresses([this](quint32 code, const json& j) {
-        if (code != 2120) return;
-        addressBox_->clear();
-        for (const auto& a : j.value("addresses", json::array())) {
-            addressBox_->addItem(QStringLiteral("%1 %2 %3").arg(QString::fromStdString(a.value("receiver_name", ""))).arg(QString::fromStdString(a.value("phone", ""))).arg(QString::fromStdString(a.value("detail", ""))), a.value("id", 0));
+    api_->fetchCart([this, serial](quint32 code, const json& result) {
+        if (serial != requestSerial_) return;
+        if (code != 2011) {
+            table_->setRowCount(0);
+            origLbl_->setText(QStringLiteral("购物车加载失败"));
+            recommendationLbl_->setText(errMsg(result));
+            updateCheckoutState();
+            return;
         }
-    });
-}
-
-void CheckoutPage::loadPromotions() {
-    promoList_->clear();
-    api_->fetchPromotions([this](quint32 code, const json& j) {
-        if (code != 2020) return;
-        for (const auto& p : j["promotions"]) {
-            QString label = QStringLiteral("#%1  %2")
-                .arg(p.value("id", 0))
-                .arg(QString::fromStdString(p.value("name", "")));
-            auto* item = new QListWidgetItem(label, promoList_);
-            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-            item->setCheckState(Qt::Unchecked);
-        }
-        api_->fetchAddresses([this](quint32 addressCode, const json& addresses) {
-            if (addressCode != 2120) return;
-            addressBox_->clear();
-            for (const auto& a : addresses.value("addresses", json::array())) {
-                addressBox_->addItem(QStringLiteral("%1 %2 %3")
-                    .arg(QString::fromStdString(a.value("receiver_name", "")))
-                    .arg(QString::fromStdString(a.value("phone", "")))
-                    .arg(QString::fromStdString(a.value("detail", ""))), a.value("id", 0));
-            }
-            api_->fetchCoupons([this](quint32 code, const json& coupons) {
-                if (code != 2140) return;
-                couponBox_->clear(); couponBox_->addItem(QStringLiteral("不使用优惠券"), 0);
-                for (const auto& c : coupons.value("coupons", json::array())) if (c.value("status", 1) == 0) {
-                    couponBox_->addItem(QString::fromStdString(c.value("name", "优惠券")), c.value("coupon_id", 0));
-                    couponBox_->setItemData(couponBox_->count() - 1, c.value("promotion_id", 0), Qt::UserRole + 1);
-                }
+        api_->cartReplace(result.value("items", json::array()));
+        table_->setRowCount(0);
+        for (const auto& line : api_->cart()) {
+            const int row = table_->rowCount();
+            table_->insertRow(row);
+            auto* selected = new QCheckBox(table_);
+            selected->setChecked(true);
+            table_->setCellWidget(row, 0, selected);
+            table_->setItem(row, 1, new QTableWidgetItem(QString::number(line.productId)));
+            table_->setItem(row, 2, new QTableWidgetItem(line.name));
+            auto* quantity = new QSpinBox(table_);
+            quantity->setRange(1, line.quantity);
+            quantity->setValue(line.quantity);
+            table_->setCellWidget(row, 3, quantity);
+            table_->setItem(row, 4, new QTableWidgetItem(QStringLiteral("¥%1").arg(yuan(line.priceCents * line.quantity))));
+            connect(selected, &QCheckBox::stateChanged, this, [this, serial](int) {
+                if (serial == requestSerial_) recommendPromotions(serial);
             });
-        });
+            connect(quantity, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, serial, row, quantity, line](int value) {
+                if (auto* subtotal = table_->item(row, 4))
+                    subtotal->setText(QStringLiteral("¥%1").arg(yuan(line.priceCents * value)));
+                if (serial == requestSerial_) recommendPromotions(serial);
+            });
+        }
+        cartReady_ = true;
+        recommendPromotions(serial);
+        updateCheckoutState();
     });
+    loadAddresses(serial);
+}
+
+std::vector<CartLine> CheckoutPage::selectedLines() const {
+    std::vector<CartLine> lines;
+    const auto& cart = api_->cart();
+    for (int row = 0; row < table_->rowCount() && row < static_cast<int>(cart.size()); ++row) {
+        auto* selected = qobject_cast<QCheckBox*>(table_->cellWidget(row, 0));
+        auto* quantity = qobject_cast<QSpinBox*>(table_->cellWidget(row, 3));
+        if (!selected || !selected->isChecked() || !quantity) continue;
+        auto line = cart[static_cast<size_t>(row)];
+        line.quantity = quantity->value();
+        lines.push_back(line);
+    }
+    return lines;
+}
+
+void CheckoutPage::loadAddresses(std::uint64_t serial) {
+    api_->fetchAddresses([this, serial](quint32 code, const json& result) {
+        if (serial != requestSerial_) return;
+        addressBox_->clear();
+        if (code != 2120) {
+            addressReady_ = false;
+            recommendationLbl_->setText(QStringLiteral("地址加载失败：%1").arg(errMsg(result)));
+            updateCheckoutState();
+            return;
+        }
+        for (const auto& address : result.value("addresses", json::array())) {
+            addressBox_->addItem(
+                QStringLiteral("%1 %2 %3")
+                    .arg(QString::fromStdString(address.value("receiver_name", "")))
+                    .arg(QString::fromStdString(address.value("phone", "")))
+                    .arg(QString::fromStdString(address.value("detail", ""))),
+                address.value("id", 0));
+        }
+        addressReady_ = true;
+        updateCheckoutState();
+    });
+}
+
+void CheckoutPage::recommendPromotions(std::uint64_t serial) {
+    const auto recommendationSerial = ++recommendationSerial_;
+    const auto lines = selectedLines();
+    int total = 0;
+    for (const auto& line : lines) total += line.priceCents * line.quantity;
+    origLbl_->setText(QStringLiteral("本次选中商品原价：¥%1").arg(yuan(total)));
+    recommendationReady_ = true;
+    recommendationOk_ = false;
+    if (lines.empty()) {
+        recommendationLbl_->setText(QStringLiteral("请至少选择一件商品"));
+        updateCheckoutState();
+        return;
+    }
+    recommendationReady_ = false;
+    recommendationLbl_->setText(QStringLiteral("正在计算最优促销…"));
+    api_->explainPromotions(lines, {}, [this, serial, recommendationSerial](quint32 code, const json& result) {
+        if (serial != requestSerial_ || recommendationSerial != recommendationSerial_) return;
+        recommendationReady_ = true;
+        if (code != 2090) {
+            recommendationLbl_->setText(QStringLiteral("促销计算失败：%1").arg(errMsg(result)));
+            recommendationOk_ = false;
+            updateCheckoutState();
+            return;
+        }
+        const auto best = result.value("best", json::object());
+        const auto description = QString::fromStdString(best.value("description", "无可用促销"));
+        recommendationLbl_->setText(QStringLiteral("最优促销：%1\n优惠：¥%2\n预计实付：¥%3")
+            .arg(description)
+            .arg(yuan(best.value("discount", 0)))
+            .arg(yuan(best.value("amount", 0))));
+        recommendationOk_ = true;
+        updateCheckoutState();
+    });
+}
+
+void CheckoutPage::updateCheckoutState() {
+    checkoutBtn_->setEnabled(cartReady_ && addressReady_ && recommendationReady_ && recommendationOk_ && !selectedLines().empty());
 }
 
 void CheckoutPage::doCheckout() {
-    if (api_->cart().empty()) {
-        resultLbl_->setStyleSheet("color:#dc2626;");
-        resultLbl_->setText(QStringLiteral("购物车为空，无法结算"));
+    const auto lines = selectedLines();
+    if (lines.empty()) {
+        showTransient(resultLbl_, QStringLiteral("请至少选择一件商品"));
         return;
     }
-    if (addressBox_->currentData().toInt() <= 0) {
-        resultLbl_->setStyleSheet("color:#dc2626;");
-        resultLbl_->setText(QStringLiteral("请先选择收货地址"));
+    const int addressId = addressBox_->currentData().toInt();
+    if (addressId <= 0) {
+        showTransient(resultLbl_, QStringLiteral("请先选择收货地址"));
         return;
     }
-    std::vector<int> ids;
-    for (int i = 0; i < promoList_->count(); ++i) {
-        auto* it = promoList_->item(i);
-        if (it->checkState() == Qt::Checked) {
-            ids.push_back(it->text().section('#', 1, 1).section(' ', 0, 0).toInt());
-        }
-    }
-    int couponPromotionId = couponBox_->currentData(Qt::UserRole + 1).toInt();
-    if (couponPromotionId > 0 && std::find(ids.begin(), ids.end(), couponPromotionId) == ids.end()) ids.push_back(couponPromotionId);
     checkoutBtn_->setEnabled(false);
-    api_->explainPromotions(ids, [this, ids](quint32 code, const json& explanation) {
+    const auto serial = requestSerial_;
+    api_->explainPromotions(lines, {}, [this, lines, addressId, serial](quint32 code, const json& explanation) {
+        if (serial != requestSerial_) return;
         if (code != 2090) {
             checkoutBtn_->setEnabled(true);
-            resultLbl_->setStyleSheet("color:#dc2626;");
-            resultLbl_->setText(errMsg(explanation));
+            showTransient(resultLbl_, QStringLiteral("促销计算失败：%1").arg(errMsg(explanation)));
             return;
         }
-        api_->checkout(ids, addressBox_->currentData().toInt(), couponBox_->currentData().toInt(), [this, explanation](quint32 checkoutCode, const json& result) {
-            checkoutBtn_->setEnabled(true);
-            if (checkoutCode == 2030) {
-                resultLbl_->setStyleSheet("color:#15803d;");
-                QString txt = QStringLiteral(
-                    "订单号：%1\n商品原价：¥%2\n优惠：¥%3\n实付：¥%4\n促销明细：%5\n最优方案：¥%6")
-                    .arg(QString::fromStdString(result.value("order_no", "")))
-                    .arg(yuan(result.value("original", 0)))
-                    .arg(yuan(result.value("discount", 0)))
-                    .arg(yuan(result.value("final", 0)))
-                    .arg(QString::fromStdString(result.value("promo_desc", "")))
-                    .arg(yuan(explanation.value("best", json::object()).value("amount", 0)));
-                resultLbl_->setText(txt);
-                api_->cartClear();
-            } else {
-                resultLbl_->setStyleSheet("color:#dc2626;");
-                resultLbl_->setText(errMsg(result));
+        std::vector<int> promoIds;
+        const auto best = explanation.value("best", json::object());
+        for (const auto& id : best.value("promo_ids", json::array()))
+            if (id.is_number_integer()) promoIds.push_back(id.get<int>());
+        api_->checkout(lines, promoIds, addressId, {}, [this, explanation, lines](quint32 checkoutCode, const json& result) {
+            if (checkoutCode != 2030) {
+                checkoutBtn_->setEnabled(true);
+                showTransient(resultLbl_, errMsg(result));
+                updateCheckoutState();
+                return;
             }
+            const QString text = QStringLiteral("订单号：%1\n商品原价：¥%2\n优惠：¥%3\n实付：¥%4\n促销明细：%5\n最优方案：¥%6")
+                .arg(QString::fromStdString(result.value("order_no", "")))
+                .arg(yuan(result.value("original", 0)))
+                .arg(yuan(result.value("discount", 0)))
+                .arg(yuan(result.value("final", 0)))
+                .arg(QString::fromStdString(result.value("promo_desc", "无")))
+                .arg(yuan(explanation.value("best", json::object()).value("amount", 0)));
+            refresh();
+            showTransient(resultLbl_, text);
         });
     });
 }

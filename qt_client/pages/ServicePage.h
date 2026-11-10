@@ -6,6 +6,7 @@
 
 class QTextEdit;
 class QLineEdit;
+class QLabel;
 class ApiClient;
 
 class ServicePage : public QWidget {
@@ -17,6 +18,7 @@ private:
     ApiClient* api_;
     QTextEdit* chatView_;
     QLineEdit* input_;
+    QLabel* tip_;
 
     void send();
 };

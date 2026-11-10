@@ -1,6 +1,11 @@
+// ============================================================
+// AdminPage.h - 卖家后台（商品上下架 / 发货录入）
+// ============================================================
 #pragma once
 #include <QWidget>
 class QTableWidget;
+class QLabel;
+class QComboBox;
 class QLabel;
 class QSpinBox;
 class QLineEdit;
@@ -18,5 +23,10 @@ private:
     QLineEdit* trackingNo_;
     QComboBox* shipmentStatus_;
     QLabel* tip_;
+    QLabel* todo_;
+    QComboBox* stockFilter_;
+    QTableWidget* orderTable_;
+    QTimer* orderTimer_;
     void loadProducts();
+    void loadOrders();
 };

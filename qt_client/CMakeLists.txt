@@ -26,6 +26,7 @@ add_executable(qt_client WIN32
     pages/ReturnPage.h pages/ReturnPage.cpp
     pages/StatsPage.h pages/StatsPage.cpp
     pages/ServicePage.h pages/ServicePage.cpp
+    pages/ReferralPage.h pages/ReferralPage.cpp
     resources.qrc
 )
 

@@ -20,6 +20,7 @@ class CouponPage;
 class NotificationPage;
 class FavoritesPage;
 class AdminPage;
+class ReferralPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -31,6 +32,7 @@ private:
     QStackedWidget* rootStack_;
     QStackedWidget* pageStack_;
     QLabel* userLbl_;
+    QLabel* noticeLbl_;
     QComboBox* themeCombo_;
 
     ShopPage*     shopPage_;
@@ -44,6 +46,7 @@ private:
     NotificationPage* notificationPage_;
     FavoritesPage* favoritesPage_;
     AdminPage* adminPage_;
+    ReferralPage* referralPage_;
 
     void buildMainUi();
     void onLogin();

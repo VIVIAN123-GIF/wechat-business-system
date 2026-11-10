@@ -1,3 +1,6 @@
+// ============================================================
+// ReturnPage.cpp - 退货进度（用户）/ 退货审核（管理员）
+// ============================================================
 #include "ReturnPage.h"
 #include "../ApiClient.h"
 #include "../UiUtil.h"
@@ -7,6 +10,7 @@
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QInputDialog>
 
 ReturnPage::ReturnPage(ApiClient* api, QWidget* parent)
     : QWidget(parent), api_(api) {
@@ -23,12 +27,8 @@ ReturnPage::ReturnPage(ApiClient* api, QWidget* parent)
     top->addWidget(refreshBtn);
     root->addLayout(top);
 
-    table_ = new QTableWidget(0, 7);
-    table_->setHorizontalHeaderLabels(
-        {QStringLiteral("退货ID"), QStringLiteral("订单ID"),
-         QStringLiteral("用户ID"), QStringLiteral("原因"),
-         QStringLiteral("状态"), QStringLiteral("申请时间"),
-         QStringLiteral("操作")});
+    table_ = new QTableWidget(0, 9);
+    table_->setHorizontalHeaderLabels({QStringLiteral("ID"), QStringLiteral("订单"), QStringLiteral("用户"), QStringLiteral("原因"), QStringLiteral("状态"), QStringLiteral("申请时间"), QStringLiteral("操作"), QStringLiteral("审核意见"), QStringLiteral("退款金额")});
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->verticalHeader()->setVisible(false);
     table_->horizontalHeader()->setStretchLastSection(true);
@@ -69,9 +69,13 @@ void ReturnPage::load() {
                 QString::number(r.value("user_id", 0))));
             table_->setItem(row, 3, new QTableWidgetItem(
                 QString::fromStdString(r.value("reason", ""))));
-            table_->setItem(row, 4, new QTableWidgetItem(returnStatusText(status)));
+            QString statusText = returnStatusText(status);
+            if (r.value("is_overdue", false)) statusText += QStringLiteral("（审核超时）");
+            table_->setItem(row, 4, new QTableWidgetItem(statusText));
             table_->setItem(row, 5, new QTableWidgetItem(
                 QString::fromStdString(r.value("apply_time", ""))));
+            table_->setItem(row, 7, new QTableWidgetItem(QString::fromStdString(r.value("audit_comment", ""))));
+            table_->setItem(row, 8, new QTableWidgetItem("￥" + yuan(r.value("refund_amount", 0))));
 
             if (admin && (status == 0 || status == 1)) {
                 auto* w = new QWidget;
@@ -79,8 +83,8 @@ void ReturnPage::load() {
                 hl->setContentsMargins(2, 2, 2, 2);
                 auto* okBtn = new QPushButton(QStringLiteral("通过"));
                 auto* noBtn = status == 0 ? new QPushButton(QStringLiteral("拒绝")) : nullptr;
-                if (status == 0) hl->addWidget(noBtn);
-                else okBtn->setText(QStringLiteral("完成退货"));
+                if (status == 0) { okBtn->setText(QStringLiteral("同意退货")); hl->addWidget(okBtn); hl->addWidget(noBtn); }
+                if (status == 1) { okBtn->setText(QStringLiteral("完成退款")); hl->addWidget(okBtn); }
                 table_->setCellWidget(row, 6, w);
 
                 int rid = r.value("return_id", 0);
@@ -88,21 +92,29 @@ void ReturnPage::load() {
                         [this, rid, status]{
                     if (status == 1) {
                         api_->completeReturn(rid, [this](quint32 c, const json& x){
-                            tipLabel_->setText(c == 2081 ? QString::fromStdString(x.value("message", "处理成功")) : errMsg(x));
+                            showTransient(tipLabel_, c == 2081 ? QString::fromStdString(x.value("message", "处理成功")) : errMsg(x));
                             load();
                         });
                         return;
                     }
-                    api_->auditReturn(rid, true, [this](quint32 c, const json& x){
-                        tipLabel_->setText(c == 2080
+                    bool ok = false;
+                    QString comment = QInputDialog::getText(this, QStringLiteral("退货审核"), QStringLiteral("审核意见："), QLineEdit::Normal, {}, &ok);
+                    if (!ok) return;
+                    int amount = QInputDialog::getInt(this, QStringLiteral("退款金额"), QStringLiteral("退款金额（分）："), 0, 0, 100000000, 1, &ok);
+                    if (!ok) return;
+                    api_->auditReturn(rid, true, comment, amount, [this](quint32 c, const json& x){
+                        showTransient(tipLabel_, c == 2080
                             ? QString::fromStdString(x.value("message", "处理成功"))
                             : errMsg(x));
                         load();
                     });
                 });
                 if (noBtn) connect(noBtn, &QPushButton::clicked, this, [this, rid]{
-                    api_->auditReturn(rid, false, [this](quint32 c, const json& x){
-                        tipLabel_->setText(c == 2080
+                    bool ok = false;
+                    QString comment = QInputDialog::getText(this, QStringLiteral("拒绝退货"), QStringLiteral("拒绝原因："), QLineEdit::Normal, {}, &ok);
+                    if (!ok || comment.trimmed().isEmpty()) return;
+                    api_->auditReturn(rid, false, comment, 0, [this](quint32 c, const json& x){
+                        showTransient(tipLabel_, c == 2080
                             ? QString::fromStdString(x.value("message", "处理成功"))
                             : errMsg(x));
                         load();

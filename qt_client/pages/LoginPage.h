@@ -21,6 +21,7 @@ private:
     ApiClient* api_;
     QLineEdit* userEdit_;
     QLineEdit* pwdEdit_;
+    QLineEdit* inviteEdit_;
     QLabel*    connStatus_;
     QLabel*    tipLabel_;
     QPushButton* loginBtn_;

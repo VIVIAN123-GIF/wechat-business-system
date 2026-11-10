@@ -1,3 +1,6 @@
+// ============================================================
+// FavoritesPage.cpp - 我的收藏
+// ============================================================
 #include "FavoritesPage.h"
 #include "../ApiClient.h"
 #include "../UiUtil.h"
@@ -15,7 +18,7 @@ FavoritesPage::FavoritesPage(ApiClient* api, QWidget* parent) : QWidget(parent),
 void FavoritesPage::refresh() {
     list_->clear(); tip_->clear();
     api_->fetchFavorites([this](quint32 code, const json& result) {
-        if (code != 2160) { tip_->setText(errMsg(result)); return; }
+        if (code != 2160) { showTransient(tip_, errMsg(result)); return; }
         for (const auto& favorite : result.value("favorites", json::array())) {
             auto* item = new QListWidgetItem(list_);
             auto* row = new QWidget;

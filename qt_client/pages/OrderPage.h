@@ -6,6 +6,7 @@
 
 class QTableWidget;
 class QLabel;
+class QComboBox;
 class ApiClient;
 
 class OrderPage : public QWidget {
@@ -19,6 +20,7 @@ private:
     QTableWidget* orderTable_;
     QTableWidget* itemTable_;
     QLabel* tipLabel_;
+    QComboBox* statusFilter_;
 
     void loadOrders();
     void applyReturn(int orderId);

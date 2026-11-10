@@ -30,6 +30,14 @@
 |      | 2007 | 注册结果 | S→C | `{"success":true,"user_id":3}` |
 | 购物车 | 1010 | 加入购物车（库存校验） | C→S | `{"user_id":1,"token":"...","product_id":1,"quantity":2}` |
 |        | 2010 | 加入购物车结果 | S→C | `{"success":true,"message":"库存充足","stock_left":13}` |
+|        | 1011 | 查询购物车 | C→S | `{"user_id":1,"token":"..."}` |
+|        | 2011 | 购物车明细 | S→C | `{"success":true,"items":[{"product_id":1,"sku_id":0,"price":29900,"quantity":2}]}` |
+|        | 1012 | 设置购物车数量 | C→S | `{"user_id":1,"product_id":1,"sku_id":0,"quantity":3}` |
+|        | 2012 | 设置数量结果 | S→C | `{"success":true,"quantity":3}` |
+|        | 1013 | 删除购物车商品 | C→S | `{"user_id":1,"product_id":1,"sku_id":0}` |
+|        | 2013 | 删除结果 | S→C | `{"success":true}` |
+|        | 1014 | 清空购物车 | C→S | `{"user_id":1,"token":"..."}` |
+|        | 2014 | 清空结果 | S→C | `{"success":true}` |
 | 搜索 | 1005 | 商品搜索（名称/分类/描述模糊） | C→S | `{"keyword":"数码"}` |
 |      | 2005 | 搜索结果 | S→C | `{"keyword":"数码","count":2,"products":[{"id":4,"name":"降噪无线耳机","price":899,"stock":5,"category":"数码"}]}` |
 | 促销 | 1020 | 获取可用促销 | C→S | `{}` |
@@ -82,6 +90,9 @@
 | 1121 | 2121 | 新建收货地址 | `{"user_id":2,"receiver_name":"张三","phone":"13800000000","detail":"详细地址","is_default":true}` | `address_id` |
 | 1130 | 2130 | 创建商品评价 | `{"user_id":2,"order_id":10,"product_id":1,"rating":5,"content":"很好"}` | `review_id` |
 | 1131 | 2131 | 查询商品评价 | `{"product_id":1}` | `product_id`、`reviews` |
+| 1202 | 2202 | 查询客服工单/会话 | `{"user_id":2}`（管理员返回全部） | `tickets` |
+| 1203 | 2203 | 更新客服工单状态 | `{"ticket_id":1,"status":"resolved"}` | `success`、`status` |
+| 1210 | 2210 | 管理促销规则 | `{"action":"list"}` / `create` / `update` / `toggle` | `promotions` 或 `success` |
 
 - 1030 只创建 `ORDER_PENDING` 订单并保存收货地址快照，不扣库存；1100 支付时在事务中原子扣库存，任一商品库存不足则整体回滚。
 - 1110 仅允许订单本人将 `ORDER_SHIPPED` 确认收货为 `ORDER_COMPLETED`。
@@ -100,6 +111,7 @@
 | 1180 | 2180 | 查询物流轨迹 | `{"user_id":2,"order_id":10}` | `tracking_no`、`status` |
 | 1181 | 2181 | 管理员录入物流 | `{"user_id":1,"order_id":10,"tracking_no":"SF123","status":0}` | `tracking_no`、`status` |
 | 1190 | 2190 | 管理员商品管理 | `{"user_id":1,"product_id":1,"action":"stock","value":20}` | `product_id`、`value` |
+| 1191 | 2191 | 管理员商品列表（含已下架商品） | `{"user_id":1}` | `products`（含 `status`） |
 | 1200 | 2200 | 查询商品 SKU | `{"product_id":1}` | `skus` |
 
 - 搜索 `1005` 支持 `min_price`、`max_price`、`category`，排序支持 `price_asc`、`price_desc`、`stock_desc`。
